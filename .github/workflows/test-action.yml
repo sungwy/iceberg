@@ -24,12 +24,17 @@ on:
 
 env:
   DOCKER_IMAGE_TAG: iceberg-rest-fixture
+  DOCKER_IMAGE_VERSION: latest
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+    - name: Set the tagged version
+    if: github.event_name == 'push'
+    run: |
+      echo "DOCKER_IMAGE_VERSION=`echo refs/tags/apache-iceberg-1.7.1 | tr -d -c 0-9.`" >> "$GITHUB_ENV"
     - name: Test tag
       run: |
-        echo ${{ secrets.DOCKERHUB_USER }}/$DOCKER_IMAGE_TAG:`echo refs/tags/apache-iceberg-1.7.1 | tr -d -c 0-9.`
+        echo ${{ secrets.DOCKERHUB_USER }}/$DOCKER_IMAGE_TAG:$DOCKER_IMAGE_VERSION
