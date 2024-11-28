@@ -33,4 +33,4 @@ jobs:
     - name: Test tag
       run: |
         echo "TAG=`echo refs/tags/apache-iceberg-1.7.1 | tr -d -c 0-9.`" >> $GITHUB_ENV
-        echo ${{ secrets.DOCKERHUB_USER }}/$DOCKER_IMAGE_TAG:$TAG
+        echo ${{ secrets.DOCKERHUB_USER }}/$DOCKER_IMAGE_TAG:${{ env.TAG }}
