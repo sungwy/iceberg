@@ -143,6 +143,7 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
           .add(Endpoint.V1_DELETE_NAMESPACE)
           .add(Endpoint.V1_LIST_TABLES)
           .add(Endpoint.V1_LOAD_TABLE)
+          .add(Endpoint.V1_TABLE_EXISTS)
           .add(Endpoint.V1_CREATE_TABLE)
           .add(Endpoint.V1_UPDATE_TABLE)
           .add(Endpoint.V1_DELETE_TABLE)
@@ -395,6 +396,19 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
     try {
       client.delete(
           paths.table(identifier), null, headers(context), ErrorHandlers.tableErrorHandler());
+      return true;
+    } catch (NoSuchTableException e) {
+      return false;
+    }
+  }
+
+  @Override
+  public boolean tableExists(SessionContext context, TableIdentifier identifier) {
+    Endpoint.check(endpoints, Endpoint.V1_TABLE_EXISTS);
+    checkIdentifierIsValid(identifier);
+
+    try {
+      client.head(paths.table(identifier), headers(context), ErrorHandlers.tableErrorHandler());
       return true;
     } catch (NoSuchTableException e) {
       return false;
