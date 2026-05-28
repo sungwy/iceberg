@@ -207,6 +207,9 @@ Examples include:
 - process-global signer or auth state crossing catalog instances
 - secret-bearing state from one principal reused for another principal within
   an Iceberg-owned boundary
+- Iceberg-owned credential-selection logic applying a vended credential to
+  paths or buckets outside its intended scope, for example through raw string
+  prefix matching in storage IO that bleeds a credential onto sibling paths
 
 ## Usually Out of Scope or Non-Security by Default
 
@@ -233,6 +236,11 @@ Iceberg itself.
 
 Reports that require a malicious catalog, metastore, or other external service
 are usually outside Iceberg's primary security boundary.
+
+Exception: if Iceberg's own credential-selection or scope-matching code is the
+mechanism that broadens a vended credential beyond its intended scope, the
+report may still be security-relevant even when the catalog itself is not
+malicious and issued the credential in good faith.
 
 ### 4. Equivalent-harm reports
 
