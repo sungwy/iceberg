@@ -80,6 +80,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.rest.RESTCatalogProperties.SnapshotMode;
+import org.apache.iceberg.rest.policy.SupportsPolicyCommit;
 import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.CreateViewRequest;
@@ -649,13 +650,27 @@ public class CatalogHandlers {
                 }
 
                 TableMetadata updated = metadataBuilder.build();
-                if (updated.changes().isEmpty()) {
-                  // do not commit if the metadata has not changed
+                if (updated.changes().isEmpty() && request.policy() == null) {
+                  // do not commit if the metadata has not changed and there is no policy to apply
                   return;
                 }
 
                 // commit
-                taskOps.commit(base, updated);
+                if (request.policy() != null) {
+                  // A policy rides this commit. Co-commit it atomically with the metadata pointer
+                  // via the SupportsPolicyCommit seam. Capability negotiation is the safety
+                  // mechanism: if the backing TableOperations cannot co-commit a policy, the whole
+                  // commit is rejected rather than silently dropping the policy field.
+                  if (!(taskOps instanceof SupportsPolicyCommit)) {
+                    throw new UnsupportedOperationException(
+                        "Catalog does not support policy co-commit, but the commit carries a policy "
+                            + "field. Refusing to drop it; reject the commit. (policy-co-commit "
+                            + "capability is advertised at GET /v1/config.)");
+                  }
+                  ((SupportsPolicyCommit) taskOps).commit(base, updated, request.policy());
+                } else {
+                  taskOps.commit(base, updated);
+                }
               });
 
     } catch (ValidationFailureException e) {

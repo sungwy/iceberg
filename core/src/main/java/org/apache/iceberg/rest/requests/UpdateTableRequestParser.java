@@ -29,6 +29,8 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.catalog.TableIdentifierParser;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.rest.policy.PolicyUpdate;
+import org.apache.iceberg.rest.policy.PolicyUpdateParser;
 import org.apache.iceberg.util.JsonUtil;
 
 public class UpdateTableRequestParser {
@@ -36,6 +38,8 @@ public class UpdateTableRequestParser {
   private static final String IDENTIFIER = "identifier";
   private static final String REQUIREMENTS = "requirements";
   private static final String UPDATES = "updates";
+  // Sibling field, parsed on a separate path from the `updates` array (which is untouched).
+  private static final String POLICY = "policy";
 
   private UpdateTableRequestParser() {}
 
@@ -68,6 +72,11 @@ public class UpdateTableRequestParser {
       MetadataUpdateParser.toJson(metadataUpdate, gen);
     }
     gen.writeEndArray();
+
+    if (null != request.policy()) {
+      gen.writeFieldName(POLICY);
+      PolicyUpdateParser.toJson(request.policy(), gen);
+    }
 
     gen.writeEndObject();
   }
@@ -105,6 +114,11 @@ public class UpdateTableRequestParser {
       updatesNode.forEach(update -> updates.add(MetadataUpdateParser.fromJson(update)));
     }
 
-    return UpdateTableRequest.create(identifier, requirements, updates);
+    PolicyUpdate policy = null;
+    if (json.hasNonNull(POLICY)) {
+      policy = PolicyUpdateParser.fromJson(JsonUtil.get(POLICY, json));
+    }
+
+    return UpdateTableRequest.create(identifier, requirements, updates, policy);
   }
 }
