@@ -77,6 +77,18 @@ statement
     | ALTER TABLE multipartIdentifier createReplaceTagClause                                #createOrReplaceTag
     | ALTER TABLE multipartIdentifier DROP BRANCH (IF EXISTS)? identifier                   #dropBranch
     | ALTER TABLE multipartIdentifier DROP TAG (IF EXISTS)? identifier                      #dropTag
+    | ALTER TABLE multipartIdentifier ADD COLUMN colName=identifier colType=identifier grantClause+ #addColumnWithGrants
+    ;
+
+// POC (RFC policy co-commit): a grant/revoke clause that trails an Iceberg ALTER TABLE so the
+// column add and the policy ride ONE statement -> ONE commit. No collision with base Spark's
+// FailNativeCommand, which only fires on a STANDALONE top-level GRANT.
+grantClause
+    : (GRANT | REVOKE) privilege=identifier '(' columns=identifierList ')' (TO | FROM) granteeType=identifier granteeName=identifier
+    ;
+
+identifierList
+    : identifier (',' identifier)*
     ;
 
 createReplaceTagClause
@@ -235,6 +247,11 @@ timeUnit
 
 ADD: 'ADD';
 ALTER: 'ALTER';
+COLUMN: 'COLUMN';
+GRANT: 'GRANT';
+REVOKE: 'REVOKE';
+TO: 'TO';
+FROM: 'FROM';
 AS: 'AS';
 ASC: 'ASC';
 BRANCH: 'BRANCH';

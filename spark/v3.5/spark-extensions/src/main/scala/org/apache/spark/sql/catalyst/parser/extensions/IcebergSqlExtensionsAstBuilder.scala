@@ -35,8 +35,10 @@ import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParserInterface
 import org.apache.spark.sql.catalyst.parser.extensions.IcebergParserUtils.withOrigin
 import org.apache.spark.sql.catalyst.parser.extensions.IcebergSqlExtensionsParser._
+import org.apache.spark.sql.catalyst.plans.logical.AddColumnWithGrants
 import org.apache.spark.sql.catalyst.plans.logical.AddPartitionField
 import org.apache.spark.sql.catalyst.plans.logical.BranchOptions
+import org.apache.spark.sql.catalyst.plans.logical.GrantSpec
 import org.apache.spark.sql.catalyst.plans.logical.CallArgument
 import org.apache.spark.sql.catalyst.plans.logical.CallStatement
 import org.apache.spark.sql.catalyst.plans.logical.CreateOrReplaceBranch
@@ -97,6 +99,30 @@ class IcebergSqlExtensionsAstBuilder(delegate: ParserInterface)
       DropPartitionField(
         typedVisit[Seq[String]](ctx.multipartIdentifier),
         typedVisit[Transform](ctx.transform))
+    }
+
+  /**
+   * Create an ADD COLUMN … (GRANT|REVOKE) … fused command (RFC policy co-commit POC). The column
+   * add and the grants compile to ONE logical node and, via [[AddColumnWithGrants.buildCommit]], ONE
+   * UpdateTableRequest.
+   */
+  override def visitAddColumnWithGrants(ctx: AddColumnWithGrantsContext): AddColumnWithGrants =
+    withOrigin(ctx) {
+      val grants = toSeq(ctx.grantClause).map { gc =>
+        val action = if (gc.GRANT() != null) "grant" else "revoke"
+        val columns = toSeq(gc.columns.identifier).map(_.getText)
+        GrantSpec(
+          action,
+          gc.privilege.getText,
+          columns,
+          gc.granteeType.getText,
+          gc.granteeName.getText)
+      }
+      AddColumnWithGrants(
+        typedVisit[Seq[String]](ctx.multipartIdentifier),
+        ctx.colName.getText,
+        ctx.colType.getText,
+        grants)
     }
 
   /**
