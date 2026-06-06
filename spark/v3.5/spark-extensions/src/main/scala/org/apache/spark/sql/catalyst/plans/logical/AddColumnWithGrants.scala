@@ -68,12 +68,28 @@ case class AddColumnWithGrants(
     TableIdentifier.of(Namespace.of(levels: _*), name)
   }
 
+  /** Assemble the ONE commit this statement compiles to, given the table's current schema. */
+  def buildCommit(base: Schema): UpdateTableRequest =
+    AddColumnWithGrants.assemble(identifier, columnName, columnType, grants, base)
+
+  /** The sibling policy payload (one apply-grants action) carrying the unbound grants. */
+  def policyUpdate(): PolicyUpdate = AddColumnWithGrants.policyUpdate(grants)
+}
+
+object AddColumnWithGrants {
+
   /**
-   * Assemble the ONE commit this statement compiles to, given the table's current schema. The new
-   * column is added to a new schema (made current), and the grants are carried unbound (by name) in
-   * the sibling policy field — the catalog binds them to field-ids against THIS commit's schema.
+   * Assemble the single {@link UpdateTableRequest} the fused statement compiles to: standard updates
+   * (add a new schema with the column, make it current) plus the sibling [[PolicyUpdate]]. The new
+   * column is added to a new schema; the grants are carried unbound (by name) and the catalog binds
+   * them to field-ids against THIS commit's schema.
    */
-  def buildCommit(base: Schema): UpdateTableRequest = {
+  def assemble(
+      identifier: TableIdentifier,
+      columnName: String,
+      columnType: String,
+      grants: Seq[GrantSpec],
+      base: Schema): UpdateTableRequest = {
     val columns = new java.util.ArrayList[Types.NestedField](base.columns())
     val newFieldId = base.highestFieldId() + 1
     columns.add(Types.NestedField.optional(newFieldId, columnName, icebergType(columnType)))
@@ -86,11 +102,10 @@ case class AddColumnWithGrants(
     val requirements = new java.util.ArrayList[UpdateRequirement]()
     requirements.add(new UpdateRequirement.AssertCurrentSchemaID(base.schemaId()))
 
-    UpdateTableRequest.create(identifier, requirements, updates, policyUpdate())
+    UpdateTableRequest.create(identifier, requirements, updates, policyUpdate(grants))
   }
 
-  /** The sibling policy payload (one apply-grants action) carrying the unbound grants. */
-  def policyUpdate(): PolicyUpdate = {
+  def policyUpdate(grants: Seq[GrantSpec]): PolicyUpdate = {
     val mapper = new ObjectMapper()
     val grantsArr = mapper.createArrayNode()
     grants.foreach { g =>
