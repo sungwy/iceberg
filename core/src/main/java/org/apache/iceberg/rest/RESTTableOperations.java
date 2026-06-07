@@ -63,6 +63,10 @@ class RESTTableOperations implements TableOperations {
   private final Set<Endpoint> endpoints;
   private UpdateType updateType;
   private TableMetadata current;
+  // RFC policy co-commit POC (closes the "engine-side commit builder" gap): a policy staged here is
+  // carried on the next commit's UpdateTableRequest as the sibling `policy` field, so a plain commit
+  // through Iceberg's own machinery co-commits the policy with the metadata. Cleared after each use.
+  private org.apache.iceberg.rest.policy.PolicyUpdate pendingPolicy;
 
   RESTTableOperations(
       RESTClient client,
@@ -153,6 +157,11 @@ class RESTTableOperations implements TableOperations {
         client.get(path, LoadTableResponse.class, readHeaders, ErrorHandlers.tableErrorHandler()));
   }
 
+  /** Stage a policy to ride the next commit's UpdateTableRequest (RFC policy co-commit POC). */
+  void stagePolicy(org.apache.iceberg.rest.policy.PolicyUpdate policy) {
+    this.pendingPolicy = policy;
+  }
+
   @Override
   public void commit(TableMetadata base, TableMetadata metadata) {
     Endpoint.check(endpoints, Endpoint.V1_UPDATE_TABLE);
@@ -196,7 +205,8 @@ class RESTTableOperations implements TableOperations {
             String.format("Update type %s is not supported", updateType));
     }
 
-    UpdateTableRequest request = new UpdateTableRequest(requirements, updates);
+    UpdateTableRequest request = new UpdateTableRequest(requirements, updates, pendingPolicy);
+    this.pendingPolicy = null; // single-use: do not leak the policy onto a later commit
 
     // the error handler will throw necessary exceptions like CommitFailedException and
     // UnknownCommitStateException
