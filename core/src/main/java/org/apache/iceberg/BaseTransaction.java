@@ -53,7 +53,8 @@ import org.apache.iceberg.util.Tasks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class BaseTransaction implements Transaction {
+public class BaseTransaction
+    implements Transaction, org.apache.iceberg.rest.policy.SupportsPolicyUpdates {
   private static final Logger LOG = LoggerFactory.getLogger(BaseTransaction.class);
 
   enum TransactionType {
@@ -76,6 +77,9 @@ public class BaseTransaction implements Transaction {
   private TableMetadata current;
   private boolean hasLastOpCommitted;
   private final MetricsReporter reporter;
+  // RFC policy co-commit: a policy staged via updatePolicy().commit(), carried on the single
+  // UpdateTableRequest this transaction flushes (when the underlying ops supports it).
+  private org.apache.iceberg.rest.policy.PolicyUpdate pendingPolicy;
 
   BaseTransaction(
       String tableName, TableOperations ops, TransactionType type, TableMetadata start) {
@@ -153,6 +157,20 @@ public class BaseTransaction implements Transaction {
   @Override
   public UpdateSchema updateSchema() {
     return appendUpdate(new SchemaUpdate(transactionOps));
+  }
+
+  @Override
+  public org.apache.iceberg.rest.policy.UpdatePolicy updatePolicy() {
+    // Not a metadata PendingUpdate: it stages a sibling policy that the final commit carries.
+    return new org.apache.iceberg.rest.policy.BaseUpdatePolicy(policy -> this.pendingPolicy = policy);
+  }
+
+  private void stagePolicyIfSupported(TableOperations underlyingOps) {
+    if (pendingPolicy != null
+        && underlyingOps instanceof org.apache.iceberg.rest.policy.PolicyAwareOperations) {
+      ((org.apache.iceberg.rest.policy.PolicyAwareOperations) underlyingOps).stagePolicy(
+          pendingPolicy);
+    }
   }
 
   @Override
@@ -275,6 +293,7 @@ public class BaseTransaction implements Transaction {
     // this operation creates the table. if the commit fails, this cannot retry because another
     // process has created the same table.
     try {
+      stagePolicyIfSupported(ops);
       ops.commit(null, current);
 
     } catch (CommitStateUnknownException e) {
@@ -369,6 +388,7 @@ public class BaseTransaction implements Transaction {
               underlyingOps -> {
                 applyUpdates(underlyingOps);
 
+                stagePolicyIfSupported(underlyingOps);
                 underlyingOps.commit(base, current);
               });
 

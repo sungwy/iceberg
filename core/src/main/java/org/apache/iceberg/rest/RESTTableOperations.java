@@ -44,7 +44,8 @@ import org.apache.iceberg.rest.responses.ErrorResponse;
 import org.apache.iceberg.rest.responses.LoadTableResponse;
 import org.apache.iceberg.util.LocationUtil;
 
-class RESTTableOperations implements TableOperations {
+class RESTTableOperations
+    implements TableOperations, org.apache.iceberg.rest.policy.PolicyAwareOperations {
   private static final String METADATA_FOLDER_NAME = "metadata";
 
   enum UpdateType {
@@ -158,7 +159,8 @@ class RESTTableOperations implements TableOperations {
   }
 
   /** Stage a policy to ride the next commit's UpdateTableRequest (RFC policy co-commit POC). */
-  void stagePolicy(org.apache.iceberg.rest.policy.PolicyUpdate policy) {
+  @Override
+  public void stagePolicy(org.apache.iceberg.rest.policy.PolicyUpdate policy) {
     this.pendingPolicy = policy;
   }
 
