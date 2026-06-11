@@ -102,9 +102,16 @@ object AddColumnWithGrants {
     val requirements = new java.util.ArrayList[UpdateRequirement]()
     requirements.add(new UpdateRequirement.AssertCurrentSchemaID(base.schemaId()))
 
-    UpdateTableRequest.create(identifier, requirements, updates, policyUpdate(grants))
+    UpdateTableRequest.create(
+      identifier,
+      requirements,
+      updates,
+      java.util.Collections.singletonList(policyUpdate(grants)))
   }
 
+  // Builds ONE PolicyUpdate in the new shape: { address: "apply-grants", references: [cols], grants }.
+  // References are authored by name, unbound; the catalog binds them against the resulting schema.
+  // No bind-schema-id rides the wire (binding-against-resulting-schema is the implicit rule).
   def policyUpdate(grants: Seq[GrantSpec]): PolicyUpdate = {
     val mapper = new ObjectMapper()
     val grantsArr = mapper.createArrayNode()
@@ -121,14 +128,14 @@ object AddColumnWithGrants {
       node.set("columns", cols)
       grantsArr.add(node)
     }
-    val action = mapper.createObjectNode()
-    action.put("address", "apply-grants")
-    action.set("grants", grantsArr)
-    val actions = mapper.createArrayNode()
-    actions.add(action)
-    // bind-schema-id -1: bind against the schema this commit produces (lets a grant reference the
-    // column the same statement adds).
-    new PolicyUpdate(-1, actions)
+    val references = mapper.createArrayNode()
+    grants.flatMap(_.columns).distinct.foreach(c => references.add(c))
+
+    val node = mapper.createObjectNode()
+    node.put("address", "apply-grants")
+    node.set("references", references)
+    node.set("grants", grantsArr)
+    new PolicyUpdate(node)
   }
 
   private def icebergType(name: String): Type =

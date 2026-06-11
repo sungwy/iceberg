@@ -18,18 +18,21 @@
  */
 package org.apache.iceberg.rest.policy;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.function.Consumer;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 /**
- * Default {@link UpdatePolicy} builder. Accumulates grant/revoke operations into a single
- * {@code apply-grants} action and, on {@link #commit()}, stages the resulting {@link PolicyUpdate}
- * into the owning transaction (via the supplied callback). References are authored unbound
- * (by name); the catalog binds them at commit ({@code bind-schema-id: -1}).
+ * Default {@link UpdatePolicy} builder. Accumulates grant/revoke operations and, on {@link
+ * #commit()}, stages one {@link PolicyUpdate} (address {@code apply-grants}) into the owning
+ * transaction. The {@code references} manifest is the set of all granted column names; references
+ * are authored unbound (by name) and bound at commit against the resulting schema.
  */
 public class BaseUpdatePolicy implements UpdatePolicy {
 
@@ -40,7 +43,7 @@ public class BaseUpdatePolicy implements UpdatePolicy {
 
   /**
    * @param stageFn callback that stages the built policy into the transaction (typically {@code
-   *     BaseTransaction::stagePendingPolicy})
+   *     pendingPolicies::add})
    */
   public BaseUpdatePolicy(Consumer<PolicyUpdate> stageFn) {
     this.stageFn = stageFn;
@@ -95,13 +98,19 @@ public class BaseUpdatePolicy implements UpdatePolicy {
   @Override
   public PolicyUpdate apply() {
     Preconditions.checkState(grants.size() > 0, "No policy operations to commit");
-    ObjectNode action = NODES.objectNode();
-    action.put("address", "apply-grants");
-    action.set("grants", grants);
-    ArrayNode actions = NODES.arrayNode();
-    actions.add(action);
-    // bind-schema-id -1: bind against the schema this commit produces.
-    return new PolicyUpdate(-1, actions);
+    // references manifest = the set of all granted column names (by name, unbound).
+    Set<String> referencedColumns = new LinkedHashSet<>();
+    for (JsonNode grant : grants) {
+      grant.get("columns").forEach(col -> referencedColumns.add(col.asText()));
+    }
+    ArrayNode references = NODES.arrayNode();
+    referencedColumns.forEach(references::add);
+
+    ObjectNode node = NODES.objectNode();
+    node.put("address", "apply-grants");
+    node.set("references", references);
+    node.set("grants", grants);
+    return new PolicyUpdate(node);
   }
 
   @Override

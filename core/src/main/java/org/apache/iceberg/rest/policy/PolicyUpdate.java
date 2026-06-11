@@ -19,56 +19,80 @@
 package org.apache.iceberg.rest.policy;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.util.ArrayList;
+import java.util.List;
 import org.apache.iceberg.relocated.com.google.common.base.MoreObjects;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 /**
- * A catalog-interpreted policy authoring payload carried as a sibling field on a commit request
- * (see {@code UpdateTableRequest#policy()}), NOT as a member of the {@code updates} array.
+ * One catalog-interpreted policy change, carried in the {@code policy-updates} sibling list on a
+ * commit request (see {@code UpdateTableRequest#policyUpdates()}), NOT as a member of {@code
+ * updates}. A {@code PolicyUpdate} mutates authorization state, not {@link
+ * org.apache.iceberg.TableMetadata}, so putting it in {@code updates} would be a category error.
  *
- * <p>A {@code PolicyUpdate} mutates authorization state, not {@link org.apache.iceberg.TableMetadata}
- * — placing it in {@code updates} would be a category error (RFC §8.12). It rides alongside the
- * metadata updates and is co-committed in the same transaction by a catalog that implements {@link
- * SupportsPolicyCommit}.
+ * <p>Shape (RFC "Proposed Envelope Design", non-normative / illustrative):
  *
- * <p>This type is deliberately <b>generic</b>: core carries the payload but does not interpret it.
- * {@link #bindSchemaId()} selects the schema that unbound column references bind against ({@code -1}
- * = the schema produced by this same commit), and {@link #actions()} is the raw, server-interpreted
- * action list (e.g. the well-known {@code apply-grants} address). Keeping the actions opaque to core
- * means new policy addresses do not require core changes.
+ * <ul>
+ *   <li>{@code address} (required) — names the kind of change; how the catalog's binder dispatches.
+ *   <li>{@code references} (required) — every column this change depends on, by NAME, unbound; the
+ *       manifest the binder resolves against the resulting schema. May be empty (table-scoped).
+ *   <li>an address-specific, opaque body ({@code additionalProperties: true}) carrying the change's
+ *       column references by name in whatever form fits the address (e.g. {@code grants},
+ *       {@code filter}).
+ * </ul>
+ *
+ * <p>There is intentionally no {@code bind-schema-id} on the wire: binding is always against the
+ * schema this commit produces (the resulting schema), an implicit rule, so no schema id rides the
+ * request. The type stays generic — core carries the body uninterpreted so a new address needs no
+ * core change.
  */
 public class PolicyUpdate {
 
-  private final int bindSchemaId;
-  private final JsonNode actions;
+  private static final String ADDRESS = "address";
+  private static final String REFERENCES = "references";
 
-  public PolicyUpdate(int bindSchemaId, JsonNode actions) {
-    Preconditions.checkArgument(null != actions, "Invalid policy actions: null");
-    Preconditions.checkArgument(actions.isArray(), "Policy actions must be an array: %s", actions);
-    this.bindSchemaId = bindSchemaId;
-    this.actions = actions;
+  private final JsonNode node;
+
+  /** @param node the full policy-update object: {@code {address, references, ...body}} */
+  public PolicyUpdate(JsonNode node) {
+    Preconditions.checkArgument(null != node, "Invalid policy update: null");
+    Preconditions.checkArgument(
+        node.isObject(), "Cannot build policy update from non-object: %s", node);
+    JsonNode address = node.get(ADDRESS);
+    Preconditions.checkArgument(
+        address != null && address.isTextual(),
+        "Policy update requires a string '%s'",
+        ADDRESS);
+    JsonNode references = node.get(REFERENCES);
+    Preconditions.checkArgument(
+        references != null && references.isArray(),
+        "Policy update requires a '%s' array (may be empty)",
+        REFERENCES);
+    this.node = node;
+  }
+
+  /** The address: the kind of policy change, used by the catalog's binder to dispatch. */
+  public String address() {
+    return node.get(ADDRESS).asText();
   }
 
   /**
-   * The id of the schema that unbound (by-name) column references in this policy bind against.
-   *
-   * <p>{@code -1} is the well-known sentinel for "the schema created by this same commit", letting a
-   * policy reference a column the commit itself adds.
+   * The references manifest: every column this change depends on, by name, unbound. This is the
+   * list the binder resolves against the resulting schema (reject on any unmatched name).
    */
-  public int bindSchemaId() {
-    return bindSchemaId;
+  public List<String> references() {
+    List<String> names = new ArrayList<>();
+    node.get(REFERENCES).forEach(name -> names.add(name.asText()));
+    return names;
   }
 
-  /** The raw, server-interpreted action list (e.g. {@code apply-grants}). */
-  public JsonNode actions() {
-    return actions;
+  /** The full policy-update object, including the address-specific body (opaque to core). */
+  public JsonNode node() {
+    return node;
   }
 
   @Override
   public String toString() {
-    return MoreObjects.toStringHelper(this)
-        .add("bindSchemaId", bindSchemaId)
-        .add("actions", actions)
-        .toString();
+    return MoreObjects.toStringHelper(this).add("policyUpdate", node).toString();
   }
 }

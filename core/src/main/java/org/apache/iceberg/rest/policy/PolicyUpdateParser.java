@@ -24,10 +24,12 @@ import java.io.IOException;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.util.JsonUtil;
 
+/**
+ * (De)serializes one {@link PolicyUpdate}. The whole object is carried verbatim — {@code address}
+ * and {@code references} plus an opaque, address-specific body — so a new address needs no parser
+ * change.
+ */
 public class PolicyUpdateParser {
-
-  private static final String BIND_SCHEMA_ID = "bind-schema-id";
-  private static final String ACTIONS = "actions";
 
   private PolicyUpdateParser() {}
 
@@ -41,12 +43,7 @@ public class PolicyUpdateParser {
 
   public static void toJson(PolicyUpdate policy, JsonGenerator gen) throws IOException {
     Preconditions.checkArgument(null != policy, "Invalid policy update: null");
-
-    gen.writeStartObject();
-    gen.writeNumberField(BIND_SCHEMA_ID, policy.bindSchemaId());
-    gen.writeFieldName(ACTIONS);
-    gen.writeTree(policy.actions());
-    gen.writeEndObject();
+    gen.writeTree(policy.node());
   }
 
   public static PolicyUpdate fromJson(String json) {
@@ -55,17 +52,6 @@ public class PolicyUpdateParser {
 
   public static PolicyUpdate fromJson(JsonNode json) {
     Preconditions.checkArgument(null != json, "Cannot parse policy update from null object");
-    Preconditions.checkArgument(
-        json.isObject(), "Cannot parse policy update from non-object: %s", json);
-
-    int bindSchemaId = JsonUtil.getInt(BIND_SCHEMA_ID, json);
-
-    JsonNode actions = json.get(ACTIONS);
-    Preconditions.checkArgument(
-        actions != null && actions.isArray(),
-        "Cannot parse policy update: '%s' must be an array",
-        ACTIONS);
-
-    return new PolicyUpdate(bindSchemaId, actions);
+    return new PolicyUpdate(json);
   }
 }

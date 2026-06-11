@@ -18,34 +18,35 @@
  */
 package org.apache.iceberg.rest.policy;
 
+import java.util.List;
 import org.apache.iceberg.TableMetadata;
 import org.apache.iceberg.TableOperations;
 
 /**
- * Optional capability for {@link TableOperations} that can co-commit a {@link PolicyUpdate}
+ * Optional capability for {@link TableOperations} that can co-commit a list of {@link PolicyUpdate}s
  * atomically with a metadata change.
  *
- * <p>This is the seam through which a commit carrying a sibling {@code policy} field is applied. A
- * catalog whose {@code TableOperations} implements this interface commits the metadata pointer and
- * the policy change in a <b>single transaction</b> (single-store catalogs get real atomicity). When
- * a commit carries a policy field but the backing {@code TableOperations} does not implement this
- * interface, the commit MUST be rejected rather than silently dropping the policy — capability
- * negotiation, not parser leniency, is the safety mechanism.
+ * <p>This is the seam through which a commit carrying the sibling {@code policy-updates} list is
+ * applied. A catalog whose {@code TableOperations} implements this interface commits the metadata
+ * pointer and the policy changes in a <b>single transaction</b> (single-store catalogs get real
+ * atomicity). When a commit carries policy updates but the backing {@code TableOperations} does not
+ * implement this interface, the commit MUST be rejected rather than silently dropping them —
+ * capability negotiation, not parser leniency, is the safety mechanism.
  */
 public interface SupportsPolicyCommit {
 
   /**
-   * Atomically commit a metadata change and a policy change in the same transaction.
+   * Atomically commit a metadata change and a list of policy changes in the same transaction.
    *
-   * <p>The implementation binds unbound (by-name) column references in {@code policy} to field-ids
-   * against {@code updated} (resolving {@code bind-schema-id: -1} to the schema produced by this
-   * commit), persists the bound policy, and advances the metadata pointer from {@code base} to
-   * {@code updated} — all-or-nothing. If any part fails, neither the metadata pointer nor the policy
-   * is durable.
+   * <p>The implementation binds each {@link PolicyUpdate}'s {@code references} (unbound, by name) to
+   * field-ids against {@code updated} (the resulting schema this commit produces), persists the
+   * bound policies, and advances the metadata pointer from {@code base} to {@code updated} —
+   * all-or-nothing. If any reference does not resolve, any address is unsupported, or any part
+   * fails, neither the metadata pointer nor any policy is durable. Binding never partially applies.
    *
    * @param base the table metadata the commit is applied on top of (the expected current state)
    * @param updated the new table metadata to commit
-   * @param policy the policy payload to bind and persist in the same transaction
+   * @param policyUpdates the policy changes to bind and persist in the same transaction
    */
-  void commit(TableMetadata base, TableMetadata updated, PolicyUpdate policy);
+  void commit(TableMetadata base, TableMetadata updated, List<PolicyUpdate> policyUpdates);
 }

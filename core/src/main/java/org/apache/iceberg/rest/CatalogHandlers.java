@@ -650,24 +650,25 @@ public class CatalogHandlers {
                 }
 
                 TableMetadata updated = metadataBuilder.build();
-                if (updated.changes().isEmpty() && request.policy() == null) {
+                boolean hasPolicy = !request.policyUpdates().isEmpty();
+                if (updated.changes().isEmpty() && !hasPolicy) {
                   // do not commit if the metadata has not changed and there is no policy to apply
                   return;
                 }
 
                 // commit
-                if (request.policy() != null) {
-                  // A policy rides this commit. Co-commit it atomically with the metadata pointer
-                  // via the SupportsPolicyCommit seam. Capability negotiation is the safety
-                  // mechanism: if the backing TableOperations cannot co-commit a policy, the whole
-                  // commit is rejected rather than silently dropping the policy field.
+                if (hasPolicy) {
+                  // Policy updates ride this commit. Co-commit them atomically with the metadata
+                  // pointer via the SupportsPolicyCommit seam. Capability negotiation is the safety
+                  // mechanism: if the backing TableOperations cannot co-commit policy, the whole
+                  // commit is rejected rather than silently dropping the policy-updates field.
                   if (!(taskOps instanceof SupportsPolicyCommit)) {
                     throw new UnsupportedOperationException(
-                        "Catalog does not support policy co-commit, but the commit carries a policy "
-                            + "field. Refusing to drop it; reject the commit. (policy-co-commit "
-                            + "capability is advertised at GET /v1/config.)");
+                        "Catalog does not support policy co-commit, but the commit carries a "
+                            + "policy-updates field. Refusing to drop it; reject the commit. "
+                            + "(policy-co-commit capability is advertised at GET /v1/config.)");
                   }
-                  ((SupportsPolicyCommit) taskOps).commit(base, updated, request.policy());
+                  ((SupportsPolicyCommit) taskOps).commit(base, updated, request.policyUpdates());
                 } else {
                   taskOps.commit(base, updated);
                 }

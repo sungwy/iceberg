@@ -39,7 +39,7 @@ public class UpdateTableRequestParser {
   private static final String REQUIREMENTS = "requirements";
   private static final String UPDATES = "updates";
   // Sibling field, parsed on a separate path from the `updates` array (which is untouched).
-  private static final String POLICY = "policy";
+  private static final String POLICY_UPDATES = "policy-updates";
 
   private UpdateTableRequestParser() {}
 
@@ -73,9 +73,12 @@ public class UpdateTableRequestParser {
     }
     gen.writeEndArray();
 
-    if (null != request.policy()) {
-      gen.writeFieldName(POLICY);
-      PolicyUpdateParser.toJson(request.policy(), gen);
+    if (!request.policyUpdates().isEmpty()) {
+      gen.writeArrayFieldStart(POLICY_UPDATES);
+      for (PolicyUpdate policyUpdate : request.policyUpdates()) {
+        PolicyUpdateParser.toJson(policyUpdate, gen);
+      }
+      gen.writeEndArray();
     }
 
     gen.writeEndObject();
@@ -114,11 +117,16 @@ public class UpdateTableRequestParser {
       updatesNode.forEach(update -> updates.add(MetadataUpdateParser.fromJson(update)));
     }
 
-    PolicyUpdate policy = null;
-    if (json.hasNonNull(POLICY)) {
-      policy = PolicyUpdateParser.fromJson(JsonUtil.get(POLICY, json));
+    List<PolicyUpdate> policyUpdates = Lists.newArrayList();
+    if (json.hasNonNull(POLICY_UPDATES)) {
+      JsonNode policyUpdatesNode = JsonUtil.get(POLICY_UPDATES, json);
+      Preconditions.checkArgument(
+          policyUpdatesNode.isArray(),
+          "Cannot parse policy-updates from non-array: %s",
+          policyUpdatesNode);
+      policyUpdatesNode.forEach(pu -> policyUpdates.add(PolicyUpdateParser.fromJson(pu)));
     }
 
-    return UpdateTableRequest.create(identifier, requirements, updates, policy);
+    return UpdateTableRequest.create(identifier, requirements, updates, policyUpdates);
   }
 }

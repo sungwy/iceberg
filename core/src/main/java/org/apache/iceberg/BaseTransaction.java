@@ -77,9 +77,11 @@ public class BaseTransaction
   private TableMetadata current;
   private boolean hasLastOpCommitted;
   private final MetricsReporter reporter;
-  // RFC policy co-commit: a policy staged via updatePolicy().commit(), carried on the single
-  // UpdateTableRequest this transaction flushes (when the underlying ops supports it).
-  private org.apache.iceberg.rest.policy.PolicyUpdate pendingPolicy;
+  // RFC policy co-commit: policy changes staged via updatePolicy().commit(), carried on the single
+  // UpdateTableRequest this transaction flushes as the `policy-updates` list (when the underlying
+  // ops supports it). One element per updatePolicy().commit().
+  private final List<org.apache.iceberg.rest.policy.PolicyUpdate> pendingPolicies =
+      Lists.newArrayList();
 
   BaseTransaction(
       String tableName, TableOperations ops, TransactionType type, TableMetadata start) {
@@ -161,15 +163,16 @@ public class BaseTransaction
 
   @Override
   public org.apache.iceberg.rest.policy.UpdatePolicy updatePolicy() {
-    // Not a metadata PendingUpdate: it stages a sibling policy that the final commit carries.
-    return new org.apache.iceberg.rest.policy.BaseUpdatePolicy(policy -> this.pendingPolicy = policy);
+    // Not a metadata PendingUpdate: each commit() appends one PolicyUpdate to the list the final
+    // commit carries as the sibling `policy-updates` field.
+    return new org.apache.iceberg.rest.policy.BaseUpdatePolicy(pendingPolicies::add);
   }
 
   private void stagePolicyIfSupported(TableOperations underlyingOps) {
-    if (pendingPolicy != null
+    if (!pendingPolicies.isEmpty()
         && underlyingOps instanceof org.apache.iceberg.rest.policy.PolicyAwareOperations) {
-      ((org.apache.iceberg.rest.policy.PolicyAwareOperations) underlyingOps).stagePolicy(
-          pendingPolicy);
+      ((org.apache.iceberg.rest.policy.PolicyAwareOperations) underlyingOps).stagePolicies(
+          pendingPolicies);
     }
   }
 

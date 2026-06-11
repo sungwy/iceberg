@@ -18,13 +18,15 @@
  */
 package org.apache.iceberg.rest.policy;
 
+import java.util.List;
+
 /**
- * Client-side {@code TableOperations} capability: a staged {@link PolicyUpdate} is carried on the
- * next commit's request as the sibling {@code policy} field. {@code BaseTransaction} stages the
- * policy here just before flushing the commit, so the policy rides Iceberg's own commit builder.
+ * Client-side {@code TableOperations} capability: staged {@link PolicyUpdate}s are carried on the
+ * next commit's request as the sibling {@code policy-updates} list. {@code BaseTransaction} stages
+ * them here just before flushing the commit, so the policy rides Iceberg's own commit builder.
  */
 public interface PolicyAwareOperations {
 
-  /** Stage a policy to ride the next commit (single-use; cleared after the commit is built). */
-  void stagePolicy(PolicyUpdate policy);
+  /** Stage policy updates to ride the next commit (single-use; cleared after the commit is built). */
+  void stagePolicies(List<PolicyUpdate> policyUpdates);
 }
