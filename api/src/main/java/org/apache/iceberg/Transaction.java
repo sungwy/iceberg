@@ -177,6 +177,23 @@ public interface Transaction {
   }
 
   /**
+   * Create a new {@link org.apache.iceberg.policy.UpdatePolicy} to author a catalog-interpreted
+   * policy change (grants, masks, row filters) that co-commits with this transaction's metadata
+   * changes. The policy is carried as a sibling field on the single commit request and bound to
+   * field-ids by the catalog against the resulting schema.
+   *
+   * <p>This is a first-class part of the transaction API: every transaction exposes it, and an
+   * implementation whose catalog cannot co-commit policy throws {@link UnsupportedOperationException}
+   * (the default below). There is intentionally no separate capability interface to cast to.
+   *
+   * @return a new {@link org.apache.iceberg.policy.UpdatePolicy}
+   */
+  default org.apache.iceberg.policy.UpdatePolicy updatePolicy() {
+    throw new UnsupportedOperationException(
+        "Policy updates are not supported by " + getClass().getName());
+  }
+
+  /**
    * Apply the pending changes from all actions and commit.
    *
    * @throws ValidationException If any update cannot be applied to the current table metadata.

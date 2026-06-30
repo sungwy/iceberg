@@ -16,22 +16,26 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.rest.policy;
+package org.apache.iceberg.policy;
 
-import org.apache.iceberg.PendingUpdate;
 import org.apache.iceberg.expressions.Expression;
 
 /**
- * API for authoring a catalog-interpreted policy change as a first-class pending update on a
- * {@link org.apache.iceberg.Transaction} (obtained via {@link SupportsPolicyUpdates#updatePolicy()}).
+ * API for authoring a catalog-interpreted policy change as a first-class pending update on a {@link
+ * org.apache.iceberg.Transaction} (obtained via {@link org.apache.iceberg.Transaction#updatePolicy()}).
  *
  * <p>Like {@link org.apache.iceberg.UpdateSchema}, configuring this builder and calling {@link
  * #commit()} stages the change into the transaction; {@code transaction.commitTransaction()} then
- * carries it as the sibling {@code policy} field on the single {@code UpdateTableRequest}. Column
- * references are authored by <b>name</b> (unbound) and bound to field-ids by the catalog at commit —
- * so a policy may reference a column the same transaction adds.
+ * carries it as the sibling policy field on the single {@code UpdateTableRequest}. Column references
+ * are authored by <b>name</b> (unbound) and bound to field-ids by the catalog at commit — so a
+ * policy may reference a column the same transaction adds.
+ *
+ * <p>This interface lives in {@code iceberg-api} (its only references are {@link Grantee} and the
+ * api-level {@link Expression}); the wire payload it builds and the binding behaviour live in
+ * {@code iceberg-core}. That separation is why {@link org.apache.iceberg.Transaction#updatePolicy()}
+ * can be a first-class method rather than an optional capability cast.
  */
-public interface UpdatePolicy extends PendingUpdate<PolicyUpdate> {
+public interface UpdatePolicy {
 
   /** Grant a privilege on the given columns to a grantee. Columns are authored by name. */
   UpdatePolicy grant(String privilege, Grantee grantee, String... columns);
@@ -53,4 +57,7 @@ public interface UpdatePolicy extends PendingUpdate<PolicyUpdate> {
    * grantee. See {@link #rowFilter} for the Expression-extension dependency.
    */
   UpdatePolicy mask(String column, Expression unboundMaskExpr, Grantee scope);
+
+  /** Stage this policy change into the owning transaction's next commit. */
+  void commit();
 }

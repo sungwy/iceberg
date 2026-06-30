@@ -53,8 +53,7 @@ import org.apache.iceberg.util.Tasks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class BaseTransaction
-    implements Transaction, org.apache.iceberg.rest.policy.SupportsPolicyUpdates {
+public class BaseTransaction implements Transaction {
   private static final Logger LOG = LoggerFactory.getLogger(BaseTransaction.class);
 
   enum TransactionType {
@@ -162,9 +161,10 @@ public class BaseTransaction
   }
 
   @Override
-  public org.apache.iceberg.rest.policy.UpdatePolicy updatePolicy() {
-    // Not a metadata PendingUpdate: each commit() appends one PolicyUpdate to the list the final
-    // commit carries as the sibling `policy-updates` field.
+  public org.apache.iceberg.policy.UpdatePolicy updatePolicy() {
+    // Overrides the Transaction default (which throws): BaseTransaction natively supports policy
+    // updates. Each commit() appends one PolicyUpdate to the list the final commit carries as the
+    // sibling `policy-updates` field. No capability interface — updatePolicy() is on Transaction.
     return new org.apache.iceberg.rest.policy.BaseUpdatePolicy(pendingPolicies::add);
   }
 

@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.iceberg.rest.policy;
+package org.apache.iceberg.policy;
 
 /** The principal a grant/revoke or a row-filter/mask scope applies to. */
 public class Grantee {

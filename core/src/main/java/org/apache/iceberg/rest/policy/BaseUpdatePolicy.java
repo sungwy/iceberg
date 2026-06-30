@@ -26,13 +26,16 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.function.Consumer;
 import org.apache.iceberg.expressions.Expression;
+import org.apache.iceberg.policy.Grantee;
+import org.apache.iceberg.policy.UpdatePolicy;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 /**
- * Default {@link UpdatePolicy} builder. Accumulates grant/revoke operations and, on {@link
- * #commit()}, stages one {@link PolicyUpdate} (address {@code apply-grants}) into the owning
- * transaction. The {@code references} manifest is the set of all granted column names; references
- * are authored unbound (by name) and bound at commit against the resulting schema.
+ * Default {@link UpdatePolicy} builder (the core-side implementation of the api-level interface).
+ * Accumulates grant/revoke operations and, on {@link #commit()}, stages one {@link PolicyUpdate}
+ * (address {@code apply-grants}) into the owning transaction. The {@code references} manifest is the
+ * set of all granted column names; references are authored unbound (by name) and bound at commit
+ * against the resulting schema.
  */
 public class BaseUpdatePolicy implements UpdatePolicy {
 
@@ -95,8 +98,9 @@ public class BaseUpdatePolicy implements UpdatePolicy {
     return this;
   }
 
-  @Override
-  public PolicyUpdate apply() {
+  // Builds the staged wire payload. Private: the api-level UpdatePolicy exposes only commit(); the
+  // PolicyUpdate (Jackson) type stays in core and never leaks onto the api surface.
+  private PolicyUpdate apply() {
     Preconditions.checkState(grants.size() > 0, "No policy operations to commit");
     // references manifest = the set of all granted column names (by name, unbound).
     Set<String> referencedColumns = new LinkedHashSet<>();
