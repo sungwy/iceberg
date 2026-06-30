@@ -19,33 +19,34 @@
 package org.apache.iceberg.rest.policy;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import java.util.LinkedHashSet;
-import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
-import org.apache.iceberg.expressions.Expression;
-import org.apache.iceberg.policy.Grantee;
 import org.apache.iceberg.policy.UpdatePolicy;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 /**
  * Default {@link UpdatePolicy} builder (the core-side implementation of the api-level interface).
- * Accumulates grant/revoke operations and, on {@link #commit()}, stages one {@link PolicyUpdate}
- * (address {@code apply-grants}) into the owning transaction. The {@code references} manifest is the
- * set of all granted column names; references are authored unbound (by name) and bound at commit
- * against the resulting schema.
+ * Payload-agnostic: each {@link #add} call builds one {@link PolicyUpdate} = {@code {address,
+ * references, ...body}} from the api-level (Jackson-free) arguments, and {@link #commit()} stages
+ * them into the owning transaction. References are authored unbound (by name) and bound at commit
+ * against the resulting schema; the Jackson-backed {@link PolicyUpdate} never appears on the api
+ * surface.
  */
 public class BaseUpdatePolicy implements UpdatePolicy {
 
   private static final JsonNodeFactory NODES = JsonNodeFactory.instance;
+  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   private final Consumer<PolicyUpdate> stageFn;
-  private final ArrayNode grants = NODES.arrayNode();
+  private final List<PolicyUpdate> staged = new ArrayList<>();
 
   /**
-   * @param stageFn callback that stages the built policy into the transaction (typically {@code
+   * @param stageFn callback that stages each built policy into the transaction (typically {@code
    *     pendingPolicies::add})
    */
   public BaseUpdatePolicy(Consumer<PolicyUpdate> stageFn) {
@@ -53,72 +54,35 @@ public class BaseUpdatePolicy implements UpdatePolicy {
   }
 
   @Override
-  public UpdatePolicy grant(String privilege, Grantee grantee, String... columns) {
-    return add("grant", privilege, grantee, columns);
-  }
-
-  @Override
-  public UpdatePolicy revoke(String privilege, Grantee grantee, String... columns) {
-    return add("revoke", privilege, grantee, columns);
-  }
-
-  @Override
-  public UpdatePolicy rowFilter(Expression unboundPredicate, Grantee scope) {
-    throw new UnsupportedOperationException(
-        "Row filters require the Iceberg Expression function/bound-reference extension "
-            + "(apply / id reference nodes) from \"Extending Iceberg Expressions\"; not yet "
-            + "available. The flat grant path needs none of it. See the POC README.");
-  }
-
-  @Override
-  public UpdatePolicy mask(String column, Expression unboundMaskExpr, Grantee scope) {
-    throw new UnsupportedOperationException(
-        "Column masks require the Iceberg Expression function extension; see rowFilter(...).");
-  }
-
-  private UpdatePolicy add(String op, String privilege, Grantee grantee, String... columns) {
-    Preconditions.checkArgument(null != grantee, "Invalid grantee: null");
+  public UpdatePolicy add(String address, List<String> references, String body) {
+    Preconditions.checkArgument(null != address && !address.isEmpty(), "Invalid address: empty");
     Preconditions.checkArgument(
-        null != columns && columns.length > 0, "Grant requires at least one column");
-    ObjectNode granteeNode = NODES.objectNode();
-    granteeNode.put("type", grantee.type());
-    granteeNode.put("name", grantee.name());
-
-    ArrayNode cols = NODES.arrayNode();
-    for (String column : columns) {
-      cols.add(column);
-    }
-
-    ObjectNode grant = NODES.objectNode();
-    grant.put("op", op);
-    grant.put("privilege", privilege);
-    grant.set("grantee", granteeNode);
-    grant.set("columns", cols);
-    grants.add(grant);
-    return this;
-  }
-
-  // Builds the staged wire payload. Private: the api-level UpdatePolicy exposes only commit(); the
-  // PolicyUpdate (Jackson) type stays in core and never leaks onto the api surface.
-  private PolicyUpdate apply() {
-    Preconditions.checkState(grants.size() > 0, "No policy operations to commit");
-    // references manifest = the set of all granted column names (by name, unbound).
-    Set<String> referencedColumns = new LinkedHashSet<>();
-    for (JsonNode grant : grants) {
-      grant.get("columns").forEach(col -> referencedColumns.add(col.asText()));
-    }
-    ArrayNode references = NODES.arrayNode();
-    referencedColumns.forEach(references::add);
+        null != references && !references.isEmpty(),
+        "Policy references must be non-empty (every co-committed policy change binds at least one column)");
 
     ObjectNode node = NODES.objectNode();
-    node.put("address", "apply-grants");
-    node.set("references", references);
-    node.set("grants", grants);
-    return new PolicyUpdate(node);
+    node.put("address", address);
+    ArrayNode refs = NODES.arrayNode();
+    references.forEach(refs::add);
+    node.set("references", refs);
+
+    JsonNode bodyNode;
+    try {
+      bodyNode = MAPPER.readTree(body);
+    } catch (Exception e) {
+      throw new IllegalArgumentException("Invalid policy body JSON for address '" + address + "'", e);
+    }
+    Preconditions.checkArgument(
+        bodyNode != null && bodyNode.isObject(), "Policy body must be a JSON object: %s", body);
+    node.setAll((ObjectNode) bodyNode);
+
+    staged.add(new PolicyUpdate(node));
+    return this;
   }
 
   @Override
   public void commit() {
-    stageFn.accept(apply());
+    Preconditions.checkState(!staged.isEmpty(), "No policy changes to commit");
+    staged.forEach(stageFn);
   }
 }

@@ -18,46 +18,41 @@
  */
 package org.apache.iceberg.policy;
 
-import org.apache.iceberg.expressions.Expression;
+import java.util.List;
 
 /**
- * API for authoring a catalog-interpreted policy change as a first-class pending update on a {@link
- * org.apache.iceberg.Transaction} (obtained via {@link org.apache.iceberg.Transaction#updatePolicy()}).
+ * API for authoring catalog-interpreted policy changes that co-commit with a {@link
+ * org.apache.iceberg.Transaction}'s metadata changes (obtained via {@link
+ * org.apache.iceberg.Transaction#updatePolicy()}).
  *
- * <p>Like {@link org.apache.iceberg.UpdateSchema}, configuring this builder and calling {@link
- * #commit()} stages the change into the transaction; {@code transaction.commitTransaction()} then
- * carries it as the sibling policy field on the single {@code UpdateTableRequest}. Column references
- * are authored by <b>name</b> (unbound) and bound to field-ids by the catalog at commit — so a
- * policy may reference a column the same transaction adds.
+ * <p>This builder is deliberately <b>payload-agnostic</b>: it mirrors the wire {@code PolicyUpdate}
+ * envelope exactly — an {@code address} (how the catalog's binder dispatches), a {@code references}
+ * manifest (every column the change depends on, by name, unbound), and an address-specific {@code
+ * body} that is opaque to the api/core envelope. It does <b>not</b> enumerate specific policy kinds
+ * (grants, masks, filters); those are vendor-interpreted addresses, so blessing any of them in the
+ * core API would be a category error. The body is passed as JSON so the api surface stays free of a
+ * JSON-library dependency (the Jackson-backed wire type lives in {@code iceberg-core}).
  *
- * <p>This interface lives in {@code iceberg-api} (its only references are {@link Grantee} and the
- * api-level {@link Expression}); the wire payload it builds and the binding behaviour live in
- * {@code iceberg-core}. That separation is why {@link org.apache.iceberg.Transaction#updatePolicy()}
- * can be a first-class method rather than an optional capability cast.
+ * <p>Like {@link org.apache.iceberg.UpdateSchema}, configure with {@link #add} then {@link
+ * #commit()} to stage into the transaction; {@code transaction.commitTransaction()} carries the
+ * staged changes as the {@code policy-updates} sibling list on the single commit request. Column
+ * references are authored by <b>name</b> (unbound) and bound to field-ids by the catalog at commit —
+ * so a policy may reference a column the same transaction adds.
  */
 public interface UpdatePolicy {
 
-  /** Grant a privilege on the given columns to a grantee. Columns are authored by name. */
-  UpdatePolicy grant(String privilege, Grantee grantee, String... columns);
-
-  /** Revoke a privilege on the given columns from a grantee. Columns are authored by name. */
-  UpdatePolicy revoke(String privilege, Grantee grantee, String... columns);
-
   /**
-   * Author a row-filter predicate (Iceberg Expression form, unbound references) scoped to a grantee.
+   * Stage one policy change to co-commit with this transaction.
    *
-   * <p>NOTE: this requires the function-call and bound-reference nodes added by "Extending Iceberg
-   * Expressions"; until that lands, this is intentionally unsupported (the grant path needs none of
-   * it). See the POC README.
+   * @param address names the kind of policy change; how the catalog's binder dispatches
+   * @param references every column this change depends on, by name (unbound, non-empty); must equal,
+   *     as a set, the columns the {@code body} references — the catalog rejects the commit otherwise
+   * @param body the address-specific content as a JSON object (e.g. {@code {"masks":[...]}}), opaque
+   *     to the envelope; its column references are authored unbound (by name) and bound at commit
+   * @return this for chaining
    */
-  UpdatePolicy rowFilter(Expression unboundPredicate, Grantee scope);
+  UpdatePolicy add(String address, List<String> references, String body);
 
-  /**
-   * Author a column mask expression (Iceberg Expression form, unbound references) scoped to a
-   * grantee. See {@link #rowFilter} for the Expression-extension dependency.
-   */
-  UpdatePolicy mask(String column, Expression unboundMaskExpr, Grantee scope);
-
-  /** Stage this policy change into the owning transaction's next commit. */
+  /** Stage the authored policy change(s) into the owning transaction's next commit. */
   void commit();
 }
