@@ -148,11 +148,6 @@ class IcebergSparkSqlExtensionsParser(delegate: ParserInterface)
       normalized.contains("write unordered") ||
       normalized.contains("set identifier fields") ||
       normalized.contains("drop identifier fields") ||
-      // RFC policy co-commit POC: fused ADD COLUMN … (GRANT|REVOKE) … rides the Iceberg grammar.
-      // Only claim it when a grant/revoke clause is present, so a plain ADD COLUMN still delegates
-      // to base Spark.
-      (normalized.contains("add column") &&
-        (normalized.contains("grant ") || normalized.contains("revoke "))) ||
       isSnapshotRefDdl(normalized)))
   }
 

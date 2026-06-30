@@ -30,7 +30,6 @@ import org.apache.spark.sql.catalyst.analysis.ResolvedNamespace
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow
 import org.apache.spark.sql.catalyst.expressions.PredicateHelper
-import org.apache.spark.sql.catalyst.plans.logical.AddColumnWithGrants
 import org.apache.spark.sql.catalyst.plans.logical.AddPartitionField
 import org.apache.spark.sql.catalyst.plans.logical.Call
 import org.apache.spark.sql.catalyst.plans.logical.CreateOrReplaceBranch
@@ -70,13 +69,6 @@ case class ExtendedDataSourceV2Strategy(spark: SparkSession) extends Strategy wi
 
     case AddPartitionField(IcebergCatalogAndIdentifier(catalog, ident), transform, name) =>
       AddPartitionFieldExec(catalog, ident, transform, name) :: Nil
-
-    case AddColumnWithGrants(
-          IcebergCatalogAndIdentifier(catalog, ident),
-          columnName,
-          columnType,
-          grants) =>
-      AddColumnWithGrantsExec(catalog, ident, columnName, columnType, grants) :: Nil
 
     case CreateOrReplaceBranch(
           IcebergCatalogAndIdentifier(catalog, ident),
