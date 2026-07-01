@@ -30,8 +30,9 @@ import org.apache.iceberg.TableOperations;
  * applied. A catalog whose {@code TableOperations} implements this interface commits the metadata
  * pointer and the policy changes in a <b>single transaction</b> (single-store catalogs get real
  * atomicity). When a commit carries policy updates but the backing {@code TableOperations} does not
- * implement this interface, the commit MUST be rejected rather than silently dropping them —
- * capability negotiation, not parser leniency, is the safety mechanism.
+ * implement this interface, the commit MUST be rejected rather than silently dropping them. There is
+ * no capability handshake; client/catalog trust is established out of band, and reject-if-cannot-honor
+ * (not parser leniency) is the safety rule.
  */
 public interface SupportsPolicyCommit {
 

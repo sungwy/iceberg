@@ -659,14 +659,14 @@ public class CatalogHandlers {
                 // commit
                 if (hasPolicy) {
                   // Policy updates ride this commit. Co-commit them atomically with the metadata
-                  // pointer via the SupportsPolicyCommit seam. Capability negotiation is the safety
-                  // mechanism: if the backing TableOperations cannot co-commit policy, the whole
-                  // commit is rejected rather than silently dropping the policy-updates field.
+                  // pointer via the SupportsPolicyCommit seam. There is no capability handshake:
+                  // client and catalog trust is established out of band, so the safety rule is that
+                  // a catalog reached with a policy field it cannot honor MUST reject the commit
+                  // rather than silently drop the policy-updates field.
                   if (!(taskOps instanceof SupportsPolicyCommit)) {
                     throw new UnsupportedOperationException(
                         "Catalog does not support policy co-commit, but the commit carries a "
-                            + "policy-updates field. Refusing to drop it; reject the commit. "
-                            + "(policy-co-commit capability is advertised at GET /v1/config.)");
+                            + "policy-updates field. Refusing to drop it; rejecting the commit.");
                   }
                   ((SupportsPolicyCommit) taskOps).commit(base, updated, request.policyUpdates());
                 } else {
