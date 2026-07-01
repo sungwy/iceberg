@@ -29,6 +29,8 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.catalog.TableIdentifierParser;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.rest.policy.PolicyUpdate;
+import org.apache.iceberg.rest.policy.PolicyUpdateParser;
 import org.apache.iceberg.util.JsonUtil;
 
 public class UpdateTableRequestParser {
@@ -36,6 +38,8 @@ public class UpdateTableRequestParser {
   private static final String IDENTIFIER = "identifier";
   private static final String REQUIREMENTS = "requirements";
   private static final String UPDATES = "updates";
+  // Sibling field, parsed on a separate path from the `updates` array (which is untouched).
+  private static final String POLICY_UPDATES = "policy-updates";
 
   private UpdateTableRequestParser() {}
 
@@ -68,6 +72,14 @@ public class UpdateTableRequestParser {
       MetadataUpdateParser.toJson(metadataUpdate, gen);
     }
     gen.writeEndArray();
+
+    if (!request.policyUpdates().isEmpty()) {
+      gen.writeArrayFieldStart(POLICY_UPDATES);
+      for (PolicyUpdate policyUpdate : request.policyUpdates()) {
+        PolicyUpdateParser.toJson(policyUpdate, gen);
+      }
+      gen.writeEndArray();
+    }
 
     gen.writeEndObject();
   }
@@ -105,6 +117,16 @@ public class UpdateTableRequestParser {
       updatesNode.forEach(update -> updates.add(MetadataUpdateParser.fromJson(update)));
     }
 
-    return UpdateTableRequest.create(identifier, requirements, updates);
+    List<PolicyUpdate> policyUpdates = Lists.newArrayList();
+    if (json.hasNonNull(POLICY_UPDATES)) {
+      JsonNode policyUpdatesNode = JsonUtil.get(POLICY_UPDATES, json);
+      Preconditions.checkArgument(
+          policyUpdatesNode.isArray(),
+          "Cannot parse policy-updates from non-array: %s",
+          policyUpdatesNode);
+      policyUpdatesNode.forEach(pu -> policyUpdates.add(PolicyUpdateParser.fromJson(pu)));
+    }
+
+    return UpdateTableRequest.create(identifier, requirements, updates, policyUpdates);
   }
 }

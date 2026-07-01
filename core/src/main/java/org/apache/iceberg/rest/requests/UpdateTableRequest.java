@@ -24,12 +24,18 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.relocated.com.google.common.base.MoreObjects;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.rest.RESTRequest;
+import org.apache.iceberg.rest.policy.PolicyUpdate;
 
 public class UpdateTableRequest implements RESTRequest {
 
   private TableIdentifier identifier;
   private List<org.apache.iceberg.UpdateRequirement> requirements;
   private List<MetadataUpdate> updates;
+  // Sibling field carrying catalog-interpreted policy changes, co-committed with the metadata
+  // updates above. NOT a member of the `updates` array — a PolicyUpdate is not a MetadataUpdate
+  // (it mutates authz, not TableMetadata). A list (one element per policy change); null/empty when
+  // the commit carries no policy. Wire key: `policy-updates`.
+  private List<PolicyUpdate> policyUpdates;
 
   public UpdateTableRequest() {
     // needed for Jackson deserialization
@@ -41,12 +47,29 @@ public class UpdateTableRequest implements RESTRequest {
     this.updates = updates;
   }
 
+  public UpdateTableRequest(
+      List<org.apache.iceberg.UpdateRequirement> requirements,
+      List<MetadataUpdate> updates,
+      List<PolicyUpdate> policyUpdates) {
+    this(requirements, updates);
+    this.policyUpdates = policyUpdates;
+  }
+
   UpdateTableRequest(
       TableIdentifier identifier,
       List<org.apache.iceberg.UpdateRequirement> requirements,
       List<MetadataUpdate> updates) {
     this(requirements, updates);
     this.identifier = identifier;
+  }
+
+  UpdateTableRequest(
+      TableIdentifier identifier,
+      List<org.apache.iceberg.UpdateRequirement> requirements,
+      List<MetadataUpdate> updates,
+      List<PolicyUpdate> policyUpdates) {
+    this(identifier, requirements, updates);
+    this.policyUpdates = policyUpdates;
   }
 
   @Override
@@ -64,11 +87,20 @@ public class UpdateTableRequest implements RESTRequest {
     return identifier;
   }
 
+  /**
+   * The sibling policy changes to co-commit with the metadata {@link #updates()}, or an empty list
+   * if the commit carries no policy. Handled on a separate code path from the {@code updates} loop.
+   */
+  public List<PolicyUpdate> policyUpdates() {
+    return policyUpdates != null ? policyUpdates : ImmutableList.of();
+  }
+
   @Override
   public String toString() {
     return MoreObjects.toStringHelper(this)
         .add("requirements", requirements)
         .add("updates", updates)
+        .add("policyUpdates", policyUpdates)
         .toString();
   }
 
@@ -77,5 +109,13 @@ public class UpdateTableRequest implements RESTRequest {
       List<org.apache.iceberg.UpdateRequirement> requirements,
       List<MetadataUpdate> updates) {
     return new UpdateTableRequest(identifier, requirements, updates);
+  }
+
+  public static UpdateTableRequest create(
+      TableIdentifier identifier,
+      List<org.apache.iceberg.UpdateRequirement> requirements,
+      List<MetadataUpdate> updates,
+      List<PolicyUpdate> policyUpdates) {
+    return new UpdateTableRequest(identifier, requirements, updates, policyUpdates);
   }
 }

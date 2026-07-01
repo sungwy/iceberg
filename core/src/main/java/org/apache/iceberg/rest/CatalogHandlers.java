@@ -80,6 +80,7 @@ import org.apache.iceberg.relocated.com.google.common.collect.Iterables;
 import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.rest.RESTCatalogProperties.SnapshotMode;
+import org.apache.iceberg.rest.policy.SupportsPolicyCommit;
 import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
 import org.apache.iceberg.rest.requests.CreateTableRequest;
 import org.apache.iceberg.rest.requests.CreateViewRequest;
@@ -649,13 +650,28 @@ public class CatalogHandlers {
                 }
 
                 TableMetadata updated = metadataBuilder.build();
-                if (updated.changes().isEmpty()) {
-                  // do not commit if the metadata has not changed
+                boolean hasPolicy = !request.policyUpdates().isEmpty();
+                if (updated.changes().isEmpty() && !hasPolicy) {
+                  // do not commit if the metadata has not changed and there is no policy to apply
                   return;
                 }
 
                 // commit
-                taskOps.commit(base, updated);
+                if (hasPolicy) {
+                  // Policy updates ride this commit. Co-commit them atomically with the metadata
+                  // pointer via the SupportsPolicyCommit seam. There is no capability handshake:
+                  // client and catalog trust is established out of band, so the safety rule is that
+                  // a catalog reached with a policy field it cannot honor MUST reject the commit
+                  // rather than silently drop the policy-updates field.
+                  if (!(taskOps instanceof SupportsPolicyCommit)) {
+                    throw new UnsupportedOperationException(
+                        "Catalog does not support policy co-commit, but the commit carries a "
+                            + "policy-updates field. Refusing to drop it; rejecting the commit.");
+                  }
+                  ((SupportsPolicyCommit) taskOps).commit(base, updated, request.policyUpdates());
+                } else {
+                  taskOps.commit(base, updated);
+                }
               });
 
     } catch (ValidationFailureException e) {

@@ -20,6 +20,7 @@ package org.apache.iceberg;
 
 import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.ValidationException;
+import org.apache.iceberg.policy.UpdatePolicy;
 
 /** A transaction for performing multiple updates to a table. */
 public interface Transaction {
@@ -174,6 +175,23 @@ public interface Transaction {
   default ManageSnapshots manageSnapshots() {
     throw new UnsupportedOperationException(
         "Managing snapshots is not supported by " + getClass().getName());
+  }
+
+  /**
+   * Create a new {@link UpdatePolicy} to author a catalog-interpreted
+   * policy change (grants, masks, row filters) that co-commits with this transaction's metadata
+   * changes. The policy is carried as a sibling field on the single commit request and bound to
+   * field-ids by the catalog against the resulting schema.
+   *
+   * <p>This is a first-class part of the transaction API: every transaction exposes it, and an
+   * implementation whose catalog cannot co-commit policy throws {@link UnsupportedOperationException}
+   * (the default below). There is intentionally no separate capability interface to cast to.
+   *
+   * @return a new {@link UpdatePolicy}
+   */
+  default UpdatePolicy updatePolicy() {
+    throw new UnsupportedOperationException(
+        "Policy updates are not supported by " + getClass().getName());
   }
 
   /**

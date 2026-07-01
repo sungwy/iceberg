@@ -39,12 +39,15 @@ import org.apache.iceberg.io.LocationProvider;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.rest.policy.PolicyAwareOperations;
+import org.apache.iceberg.rest.policy.PolicyUpdate;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.apache.iceberg.rest.responses.ErrorResponse;
 import org.apache.iceberg.rest.responses.LoadTableResponse;
 import org.apache.iceberg.util.LocationUtil;
 
-class RESTTableOperations implements TableOperations {
+class RESTTableOperations
+    implements TableOperations, PolicyAwareOperations {
   private static final String METADATA_FOLDER_NAME = "metadata";
 
   enum UpdateType {
@@ -63,6 +66,10 @@ class RESTTableOperations implements TableOperations {
   private final Set<Endpoint> endpoints;
   private UpdateType updateType;
   private TableMetadata current;
+  // RFC policy co-commit POC: policy updates staged here are carried on the next commit's
+  // UpdateTableRequest as the sibling `policy-updates` list, so a plain commit through Iceberg's own
+  // machinery co-commits the policy with the metadata. Cleared after each use.
+  private List<PolicyUpdate> pendingPolicies;
 
   RESTTableOperations(
       RESTClient client,
@@ -153,6 +160,12 @@ class RESTTableOperations implements TableOperations {
         client.get(path, LoadTableResponse.class, readHeaders, ErrorHandlers.tableErrorHandler()));
   }
 
+  /** Stage policy updates to ride the next commit's UpdateTableRequest (RFC policy co-commit POC). */
+  @Override
+  public void stagePolicies(List<PolicyUpdate> policies) {
+    this.pendingPolicies = policies;
+  }
+
   @Override
   public void commit(TableMetadata base, TableMetadata metadata) {
     Endpoint.check(endpoints, Endpoint.V1_UPDATE_TABLE);
@@ -196,7 +209,8 @@ class RESTTableOperations implements TableOperations {
             String.format("Update type %s is not supported", updateType));
     }
 
-    UpdateTableRequest request = new UpdateTableRequest(requirements, updates);
+    UpdateTableRequest request = new UpdateTableRequest(requirements, updates, pendingPolicies);
+    this.pendingPolicies = null; // single-use: do not leak the policy onto a later commit
 
     // the error handler will throw necessary exceptions like CommitFailedException and
     // UnknownCommitStateException

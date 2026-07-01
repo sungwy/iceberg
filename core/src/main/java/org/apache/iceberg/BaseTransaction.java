@@ -43,11 +43,15 @@ import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.LocationProvider;
 import org.apache.iceberg.metrics.LoggingMetricsReporter;
 import org.apache.iceberg.metrics.MetricsReporter;
+import org.apache.iceberg.policy.UpdatePolicy;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
+import org.apache.iceberg.rest.policy.BaseUpdatePolicy;
+import org.apache.iceberg.rest.policy.PolicyAwareOperations;
+import org.apache.iceberg.rest.policy.PolicyUpdate;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.Tasks;
 import org.slf4j.Logger;
@@ -76,6 +80,10 @@ public class BaseTransaction implements Transaction {
   private TableMetadata current;
   private boolean hasLastOpCommitted;
   private final MetricsReporter reporter;
+  // RFC policy co-commit: policy changes staged via updatePolicy().commit(), carried on the single
+  // UpdateTableRequest this transaction flushes as the `policy-updates` list (when the underlying
+  // ops supports it). One element per updatePolicy().commit().
+  private final List<PolicyUpdate> pendingPolicies = Lists.newArrayList();
 
   BaseTransaction(
       String tableName, TableOperations ops, TransactionType type, TableMetadata start) {
@@ -153,6 +161,20 @@ public class BaseTransaction implements Transaction {
   @Override
   public UpdateSchema updateSchema() {
     return appendUpdate(new SchemaUpdate(transactionOps));
+  }
+
+  @Override
+  public UpdatePolicy updatePolicy() {
+    // Overrides the Transaction default (which throws): BaseTransaction natively supports policy
+    // updates. Each commit() appends one PolicyUpdate to the list the final commit carries as the
+    // sibling `policy-updates` field. No capability interface — updatePolicy() is on Transaction.
+    return new BaseUpdatePolicy(pendingPolicies::add);
+  }
+
+  private void stagePolicyIfSupported(TableOperations underlyingOps) {
+    if (!pendingPolicies.isEmpty() && underlyingOps instanceof PolicyAwareOperations) {
+      ((PolicyAwareOperations) underlyingOps).stagePolicies(pendingPolicies);
+    }
   }
 
   @Override
@@ -275,6 +297,7 @@ public class BaseTransaction implements Transaction {
     // this operation creates the table. if the commit fails, this cannot retry because another
     // process has created the same table.
     try {
+      stagePolicyIfSupported(ops);
       ops.commit(null, current);
 
     } catch (CommitStateUnknownException e) {
@@ -369,6 +392,7 @@ public class BaseTransaction implements Transaction {
               underlyingOps -> {
                 applyUpdates(underlyingOps);
 
+                stagePolicyIfSupported(underlyingOps);
                 underlyingOps.commit(base, current);
               });
 
