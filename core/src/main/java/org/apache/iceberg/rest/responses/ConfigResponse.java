@@ -54,9 +54,6 @@ public class ConfigResponse implements RESTResponse {
   private List<Endpoint> endpoints;
   // Optional ISO-8601 duration string indicating server support for idempotency keys
   private String idempotencyKeyLifetime;
-  // Optional, generic capability advertisement (e.g. policy-co-commit). Presence = supported; the
-  // shape is intentionally open (a JSON object) so new capabilities need no ConfigResponse change.
-  private com.fasterxml.jackson.databind.JsonNode capabilities;
 
   public ConfigResponse() {
     // Required for Jackson deserialization
@@ -66,13 +63,11 @@ public class ConfigResponse implements RESTResponse {
       Map<String, String> defaults,
       Map<String, String> overrides,
       List<Endpoint> endpoints,
-      String idempotencyKeyLifetime,
-      com.fasterxml.jackson.databind.JsonNode capabilities) {
+      String idempotencyKeyLifetime) {
     this.defaults = defaults;
     this.overrides = overrides;
     this.endpoints = endpoints;
     this.idempotencyKeyLifetime = idempotencyKeyLifetime;
-    this.capabilities = capabilities;
     validate();
   }
 
@@ -121,17 +116,6 @@ public class ConfigResponse implements RESTResponse {
   }
 
   /**
-   * Optional, server-advertised capabilities (e.g. {@code policy-co-commit}). Presence of a named
-   * capability means the server supports it; absence means it does not (there is no "false" value).
-   *
-   * @return a JSON object of capability advertisements, or null if none are advertised
-   */
-  @Nullable
-  public com.fasterxml.jackson.databind.JsonNode capabilities() {
-    return capabilities;
-  }
-
-  /**
    * Merge client-provided config with server side provided configuration to return a single
    * properties map which will be used for instantiating and configuring the REST catalog.
    *
@@ -172,14 +156,12 @@ public class ConfigResponse implements RESTResponse {
     private final Map<String, String> overrides;
     private final List<Endpoint> endpoints;
     private String idempotencyKeyLifetime;
-    private com.fasterxml.jackson.databind.JsonNode capabilities;
 
     private Builder() {
       this.defaults = Maps.newHashMap();
       this.overrides = Maps.newHashMap();
       this.endpoints = Lists.newArrayList();
       this.idempotencyKeyLifetime = null;
-      this.capabilities = null;
     }
 
     public Builder withDefault(String key, String value) {
@@ -223,14 +205,8 @@ public class ConfigResponse implements RESTResponse {
       return this;
     }
 
-    /** Sets the optional capability advertisement object (e.g. {@code policy-co-commit}). */
-    public Builder withCapabilities(com.fasterxml.jackson.databind.JsonNode capabilitiesToAdd) {
-      this.capabilities = capabilitiesToAdd;
-      return this;
-    }
-
     public ConfigResponse build() {
-      return new ConfigResponse(defaults, overrides, endpoints, idempotencyKeyLifetime, capabilities);
+      return new ConfigResponse(defaults, overrides, endpoints, idempotencyKeyLifetime);
     }
   }
 }
