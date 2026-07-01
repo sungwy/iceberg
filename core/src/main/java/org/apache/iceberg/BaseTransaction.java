@@ -43,11 +43,15 @@ import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.LocationProvider;
 import org.apache.iceberg.metrics.LoggingMetricsReporter;
 import org.apache.iceberg.metrics.MetricsReporter;
+import org.apache.iceberg.policy.UpdatePolicy;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableSet;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
+import org.apache.iceberg.rest.policy.BaseUpdatePolicy;
+import org.apache.iceberg.rest.policy.PolicyAwareOperations;
+import org.apache.iceberg.rest.policy.PolicyUpdate;
 import org.apache.iceberg.util.PropertyUtil;
 import org.apache.iceberg.util.Tasks;
 import org.slf4j.Logger;
@@ -79,8 +83,7 @@ public class BaseTransaction implements Transaction {
   // RFC policy co-commit: policy changes staged via updatePolicy().commit(), carried on the single
   // UpdateTableRequest this transaction flushes as the `policy-updates` list (when the underlying
   // ops supports it). One element per updatePolicy().commit().
-  private final List<org.apache.iceberg.rest.policy.PolicyUpdate> pendingPolicies =
-      Lists.newArrayList();
+  private final List<PolicyUpdate> pendingPolicies = Lists.newArrayList();
 
   BaseTransaction(
       String tableName, TableOperations ops, TransactionType type, TableMetadata start) {
@@ -161,18 +164,16 @@ public class BaseTransaction implements Transaction {
   }
 
   @Override
-  public org.apache.iceberg.policy.UpdatePolicy updatePolicy() {
+  public UpdatePolicy updatePolicy() {
     // Overrides the Transaction default (which throws): BaseTransaction natively supports policy
     // updates. Each commit() appends one PolicyUpdate to the list the final commit carries as the
     // sibling `policy-updates` field. No capability interface — updatePolicy() is on Transaction.
-    return new org.apache.iceberg.rest.policy.BaseUpdatePolicy(pendingPolicies::add);
+    return new BaseUpdatePolicy(pendingPolicies::add);
   }
 
   private void stagePolicyIfSupported(TableOperations underlyingOps) {
-    if (!pendingPolicies.isEmpty()
-        && underlyingOps instanceof org.apache.iceberg.rest.policy.PolicyAwareOperations) {
-      ((org.apache.iceberg.rest.policy.PolicyAwareOperations) underlyingOps).stagePolicies(
-          pendingPolicies);
+    if (!pendingPolicies.isEmpty() && underlyingOps instanceof PolicyAwareOperations) {
+      ((PolicyAwareOperations) underlyingOps).stagePolicies(pendingPolicies);
     }
   }
 

@@ -39,13 +39,15 @@ import org.apache.iceberg.io.LocationProvider;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
+import org.apache.iceberg.rest.policy.PolicyAwareOperations;
+import org.apache.iceberg.rest.policy.PolicyUpdate;
 import org.apache.iceberg.rest.requests.UpdateTableRequest;
 import org.apache.iceberg.rest.responses.ErrorResponse;
 import org.apache.iceberg.rest.responses.LoadTableResponse;
 import org.apache.iceberg.util.LocationUtil;
 
 class RESTTableOperations
-    implements TableOperations, org.apache.iceberg.rest.policy.PolicyAwareOperations {
+    implements TableOperations, PolicyAwareOperations {
   private static final String METADATA_FOLDER_NAME = "metadata";
 
   enum UpdateType {
@@ -67,7 +69,7 @@ class RESTTableOperations
   // RFC policy co-commit POC: policy updates staged here are carried on the next commit's
   // UpdateTableRequest as the sibling `policy-updates` list, so a plain commit through Iceberg's own
   // machinery co-commits the policy with the metadata. Cleared after each use.
-  private java.util.List<org.apache.iceberg.rest.policy.PolicyUpdate> pendingPolicies;
+  private List<PolicyUpdate> pendingPolicies;
 
   RESTTableOperations(
       RESTClient client,
@@ -160,7 +162,7 @@ class RESTTableOperations
 
   /** Stage policy updates to ride the next commit's UpdateTableRequest (RFC policy co-commit POC). */
   @Override
-  public void stagePolicies(java.util.List<org.apache.iceberg.rest.policy.PolicyUpdate> policies) {
+  public void stagePolicies(List<PolicyUpdate> policies) {
     this.pendingPolicies = policies;
   }
 
