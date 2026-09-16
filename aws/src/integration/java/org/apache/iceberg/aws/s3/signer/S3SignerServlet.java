@@ -18,7 +18,11 @@
  */
 package org.apache.iceberg.aws.s3.signer;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.net.URI;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.util.Arrays;
@@ -32,10 +36,12 @@ import org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.rest.HttpMethod;
 import org.apache.iceberg.rest.RemoteSignerServlet;
+import org.apache.iceberg.rest.RemoteSigningClient;
 import org.apache.iceberg.rest.requests.RemoteSignRequest;
 import org.apache.iceberg.rest.responses.ImmutableRemoteSignResponse;
 import org.apache.iceberg.rest.responses.RemoteSignResponse;
 import software.amazon.awssdk.auth.signer.AwsS3V4Signer;
+import software.amazon.awssdk.auth.signer.params.Aws4PresignerParams;
 import software.amazon.awssdk.auth.signer.params.AwsS3V4SignerParams;
 import software.amazon.awssdk.http.SdkHttpFullRequest;
 import software.amazon.awssdk.http.SdkHttpMethod;
@@ -56,8 +62,28 @@ public class S3SignerServlet extends RemoteSignerServlet {
   /** A fake remote signing endpoint for testing purposes. */
   static final String S3_SIGNER_ENDPOINT = "v1/namespaces/ns1/tables/t1/sign";
 
+  private final ThreadLocal<Boolean> preSignedUrlRequested = ThreadLocal.withInitial(() -> false);
+  private final Region s3Region;
+  private volatile RemoteSignRequest lastRequest;
+
   public S3SignerServlet() {
+    this(null);
+  }
+
+  public S3SignerServlet(Region s3Region) {
     super(S3_SIGNER_ENDPOINT);
+    this.s3Region = s3Region;
+  }
+
+  @Override
+  protected void execute(HttpServletRequest request, HttpServletResponse response) {
+    String delegation = request.getHeader(RemoteSigningClient.ACCESS_DELEGATION_HEADER);
+    preSignedUrlRequested.set(RemoteSigningClient.REMOTE_PRESIGNING.equals(delegation));
+    try {
+      super.execute(request, response);
+    } finally {
+      preSignedUrlRequested.remove();
+    }
   }
 
   @Override
@@ -75,8 +101,17 @@ public class S3SignerServlet extends RemoteSignerServlet {
     }
   }
 
+  RemoteSignRequest lastRequest() {
+    return lastRequest;
+  }
+
   @Override
   protected RemoteSignResponse signRequest(RemoteSignRequest request) {
+    this.lastRequest = request;
+    if (preSignedUrlRequested.get()) {
+      return preSign(request);
+    }
+
     AwsS3V4SignerParams signingParams =
         AwsS3V4SignerParams.builder()
             .awsCredentials(TestS3RestSigner.CREDENTIALS_PROVIDER.resolveCredentials())
@@ -113,5 +148,39 @@ public class S3SignerServlet extends RemoteSignerServlet {
     headers.putAll(unsignedHeaders);
 
     return ImmutableRemoteSignResponse.builder().uri(request.uri()).headers(headers).build();
+  }
+
+  private RemoteSignResponse preSign(RemoteSignRequest request) {
+    URI uri = request.uri();
+    Preconditions.checkArgument(
+        "http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()),
+        "Not an HTTP request: %s",
+        uri);
+    Region region = request.region().isEmpty() ? s3Region : Region.of(request.region());
+    Preconditions.checkState(region != null, "Pre-signing requires a region");
+
+    Aws4PresignerParams params =
+        Aws4PresignerParams.builder()
+            .awsCredentials(TestS3RestSigner.CREDENTIALS_PROVIDER.resolveCredentials())
+            .signingRegion(region)
+            .signingName("s3")
+            .doubleUrlEncode(false)
+            .expirationTime(Instant.now().plus(Duration.ofMinutes(10)))
+            .build();
+
+    SdkHttpFullRequest presigned =
+        AwsS3V4Signer.create()
+            .presign(
+                SdkHttpFullRequest.builder()
+                    .uri(uri)
+                    .method(SdkHttpMethod.fromValue(request.method()))
+                    .headers(request.headers())
+                    .build(),
+                params);
+
+    return ImmutableRemoteSignResponse.builder()
+        .uri(presigned.getUri())
+        .headers(request.headers())
+        .build();
   }
 }

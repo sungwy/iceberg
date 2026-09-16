@@ -18,10 +18,18 @@
  */
 package org.apache.iceberg.io;
 
+import java.net.URI;
+import java.util.Collection;
+import java.util.Map;
 import org.apache.iceberg.metrics.MetricsContext;
+import org.apache.iceberg.rest.RemoteSigningClient;
+import org.apache.iceberg.rest.requests.ImmutableRemoteSignRequest;
+import org.apache.iceberg.rest.requests.RemoteSignRequest;
 
 /** Base {@link FileIO} implementation with shared handling for HTTP(S) input locations. */
-public abstract class BaseFileIO implements FileIO {
+public abstract class BaseFileIO implements FileIO, SupportsPreSigning {
+
+  private transient volatile RemoteSigningClient signingClient;
 
   @Override
   public final InputFile newInputFile(String path) {
@@ -41,6 +49,11 @@ public abstract class BaseFileIO implements FileIO {
     return newInputFileForLocation(path, length);
   }
 
+  @Override
+  public Map<String, URI> preSign(Collection<String> locations) {
+    return signingClient().preSign(locations, this::preSignRequest);
+  }
+
   protected MetricsContext metrics() {
     return MetricsContext.nullMetrics();
   }
@@ -48,4 +61,50 @@ public abstract class BaseFileIO implements FileIO {
   protected abstract InputFile newInputFileForLocation(String path);
 
   protected abstract InputFile newInputFileForLocation(String path, long length);
+
+  protected URI httpUrl(String location) {
+    if (!HttpInputFile.isHttpUrl(location)) {
+      throw new UnsupportedOperationException(
+          String.format("Cannot pre-sign %s: not an HTTP URL", location));
+    }
+
+    return URI.create(location);
+  }
+
+  protected String signingRegion(String location) {
+    return "";
+  }
+
+  protected String signingProvider(String location) {
+    return HttpInputFile.isHttpUrl(location) ? null : URI.create(location).getScheme();
+  }
+
+  private RemoteSignRequest preSignRequest(String location) {
+    return ImmutableRemoteSignRequest.builder()
+        .method("GET")
+        .region(signingRegion(location))
+        .uri(httpUrl(location))
+        .provider(signingProvider(location))
+        .build();
+  }
+
+  private RemoteSigningClient signingClient() {
+    if (null == signingClient) {
+      synchronized (this) {
+        if (null == signingClient) {
+          this.signingClient = RemoteSigningClient.create(properties());
+        }
+      }
+    }
+
+    return signingClient;
+  }
+
+  @Override
+  public void close() {
+    if (signingClient != null) {
+      signingClient.close();
+      this.signingClient = null;
+    }
+  }
 }

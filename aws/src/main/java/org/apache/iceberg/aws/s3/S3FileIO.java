@@ -18,6 +18,7 @@
  */
 package org.apache.iceberg.aws.s3;
 
+import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -160,6 +161,28 @@ public class S3FileIO extends BaseFileIO
   @Override
   protected MetricsContext metrics() {
     return metrics;
+  }
+
+  @Override
+  protected URI httpUrl(String path) {
+    PrefixedS3Client client = clientForStoragePath(path);
+    S3URI location = new S3URI(path, client.s3FileIOProperties().bucketToAccessPointMapping());
+    return URI.create(
+        client
+            .s3()
+            .utilities()
+            .getUrl(request -> request.bucket(location.bucket()).key(location.key()))
+            .toString());
+  }
+
+  @Override
+  protected String signingRegion(String path) {
+    return clientForStoragePath(path).s3().serviceClientConfiguration().region().id();
+  }
+
+  @Override
+  protected String signingProvider(String path) {
+    return ROOT_PREFIX;
   }
 
   @Override
@@ -551,6 +574,8 @@ public class S3FileIO extends BaseFileIO
         refreshFuture.cancel(true);
         refreshFuture = null;
       }
+
+      super.close();
     }
   }
 
