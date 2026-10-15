@@ -31,7 +31,7 @@ RUN  set -xeu && \
 WORKDIR /usr/lib/iceberg-rest
 
 # Copy runtime files directly to the target location
-COPY --chown=iceberg:iceberg open-api/build/libs/iceberg-open-api-test-fixtures-runtime-*.jar /usr/lib/iceberg-rest/iceberg-rest-adapter.jar
+COPY --chown=iceberg:iceberg open-api/build/install/iceberg-rest-fixture/ /usr/lib/iceberg-rest/
 COPY --chown=iceberg:iceberg docker/iceberg-rest-fixture/entrypoint.sh /usr/lib/iceberg-rest/entrypoint.sh
 
 ENV CATALOG_CATALOG__IMPL=org.apache.iceberg.jdbc.JdbcCatalog

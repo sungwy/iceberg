@@ -1113,15 +1113,13 @@ project(':iceberg-snowflake') {
 
 project(':iceberg-open-api') {
   apply plugin: 'java-test-fixtures'
-  apply plugin: 'com.gradleup.shadow'
+  apply plugin: 'distribution'
 
   // There are no main sources, so drop the implicit test fixtures -> main component dependency that
   // would otherwise put the disabled main JAR on consumers' classpaths
   configurations.testFixturesApi.dependencies.removeIf {
     it instanceof ProjectDependency && it.path == project.path
   }
-
-  build.dependsOn shadowJar
 
   dependencies {
     testImplementation project(':iceberg-api')
@@ -1208,21 +1206,30 @@ project(':iceberg-open-api') {
   }
   check.dependsOn('validateRESTCatalogSpec')
 
-  shadowJar {
-    archiveBaseName.set("iceberg-open-api-test-fixtures-runtime")
-    archiveClassifier.set(null)
-    configurations = [project.configurations.testFixturesRuntimeClasspath]
-    from sourceSets.testFixtures.output
-    zip64 true
-
-    manifest {
-      attributes 'Main-Class': 'org.apache.iceberg.rest.RESTCatalogServer'
+  // The REST fixture is distributed as a directory of unmodified dependency Jars rather than a shaded
+  // Jar, so each dependency keeps its own license metadata. Not published to Maven.
+  distributions {
+    main {
+      distributionBaseName = 'iceberg-rest-fixture'
+      contents {
+        from "${projectDir}/LICENSE"
+        from "${projectDir}/NOTICE"
+        into('lib/') {
+          from tasks.testFixturesJar
+          from configurations.testFixturesRuntimeClasspath
+        }
+      }
     }
   }
+
+  tasks.distTar.enabled = false
 
   jar {
     enabled = false
   }
+
+  ext.runtimeDepsConfiguration = 'testFixturesRuntimeClasspath'
+  apply from: "${rootDir}/runtime-deps.gradle"
 }
 
 @Memoized

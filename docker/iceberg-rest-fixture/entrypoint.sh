@@ -20,7 +20,7 @@
 
 set -eu
 
-CLASSPATH="iceberg-rest-adapter.jar"
+CLASSPATH="lib/*"
 
 if [ -n "${LOG_CONFIG_DIR:-}" ]; then
   CLASSPATH="${LOG_CONFIG_DIR}:${CLASSPATH}"

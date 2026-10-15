@@ -25,12 +25,13 @@
 // into the runtime JAR, inflating its size and introducing unlicensed code.
 //
 // Apply this script in any project that ships a bundled artifact: Spark and
-// Flink runtime shadow JARs, cloud bundles (aws, azure, gcp), and Kafka
-// Connect runtime distribution.
+// Flink runtime shadow JARs, cloud bundles (aws, azure, gcp), Kafka
+// Connect runtime distribution, and the REST fixture distribution.
 //
 // It adds two tasks:
 //
-//   generateRuntimeDeps  - resolves runtimeClasspath and writes a sorted
+//   generateRuntimeDeps  - resolves runtimeClasspath (or the configuration
+//                          named by ext.runtimeDepsConfiguration) and writes a sorted
 //                          baseline of group:artifact:major.minor coordinates
 //                          to runtime-deps.txt in the project directory.
 //                          Patch versions are omitted so that routine
@@ -49,13 +50,18 @@
 
 def depsFile = file("${projectDir}/runtime-deps.txt")
 
+// Projects whose shipped classpath is not runtimeClasspath set ext.runtimeDepsConfiguration
+// before applying this script.
+def depsConfiguration = configurations.getByName(
+  project.ext.has('runtimeDepsConfiguration') ? project.ext.runtimeDepsConfiguration : 'runtimeClasspath')
+
 def majorMinor = { version ->
   def parts = version.split('\\.')
   parts.length >= 2 ? "${parts[0]}.${parts[1]}" : version
 }
 
 def resolveRuntimeDeps = {
-  configurations.runtimeClasspath.resolvedConfiguration
+  depsConfiguration.resolvedConfiguration
     .resolvedArtifacts
     .collect {
       def id = it.moduleVersion.id
@@ -81,7 +87,7 @@ tasks.register('generateRuntimeDeps') {
 tasks.register('checkRuntimeDeps') {
   group = 'verification'
   description = 'Verify runtime dependencies match the checked-in baseline'
-  inputs.files(configurations.runtimeClasspath)
+  inputs.files(depsConfiguration)
   outputs.file(depsFile)
   doLast {
     if (!depsFile.exists()) {
