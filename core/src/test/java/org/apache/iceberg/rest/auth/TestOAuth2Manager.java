@@ -34,6 +34,7 @@ import java.time.Duration;
 import java.util.Map;
 import org.apache.iceberg.catalog.SessionCatalog;
 import org.apache.iceberg.catalog.TableIdentifier;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
 import org.apache.iceberg.rest.RESTClient;
 import org.apache.iceberg.rest.responses.OAuthTokenResponse;
 import org.junit.jupiter.api.BeforeEach;
@@ -656,22 +657,61 @@ class TestOAuth2Manager {
   }
 
   @Test
-  void catalogSessionWithTokenAndCredentialRefreshesWithCredential() {
+  void catalogSessionFromCredentialRefreshesWithCredential() {
     RESTClient grantClient = grantAwareClient();
-    Map<String, String> catalogProperties =
-        Map.of(
-            OAuth2Properties.TOKEN,
-            "catalog-token",
-            OAuth2Properties.CREDENTIAL,
-            CATALOG_CREDENTIAL,
-            OAuth2Properties.TOKEN_EXCHANGE_ENABLED,
-            "false");
     try (OAuth2Manager manager = new OAuth2Manager("test");
         OAuth2Util.AuthSession catalogSession =
-            manager.catalogSession(grantClient, catalogProperties)) {
+            manager.catalogSession(grantClient, exchangeDisabledCatalogProperties())) {
+      Mockito.clearInvocations(grantClient);
+
       catalogSession.refresh(grantClient);
 
-      assertThat(catalogSession.token()).isEqualTo(CATALOG_PRINCIPAL_TOKEN);
+      Mockito.verify(grantClient)
+          .postForm(
+              any(),
+              argThat(form -> form != null && "client_credentials".equals(form.get("grant_type"))),
+              eq(OAuthTokenResponse.class),
+              anyMap(),
+              any());
+    }
+  }
+
+  @Test
+  void catalogSessionWithTokenDoesNotRefreshWithCredential() {
+    RESTClient grantClient = grantAwareClient();
+    Map<String, String> properties =
+        ImmutableMap.<String, String>builder()
+            .putAll(exchangeDisabledCatalogProperties())
+            .put(OAuth2Properties.TOKEN, "catalog-token")
+            .buildOrThrow();
+    try (OAuth2Manager manager = new OAuth2Manager("test");
+        OAuth2Util.AuthSession catalogSession = manager.catalogSession(grantClient, properties)) {
+      Mockito.clearInvocations(grantClient);
+
+      catalogSession.refresh(grantClient);
+
+      assertThat(catalogSession.token()).isEqualTo("catalog-token");
+      verifyNoClientCredentialsGrant(grantClient);
+    }
+  }
+
+  @Test
+  void standaloneTableSessionWithTokenDoesNotRefreshWithCredential() {
+    RESTClient grantClient = grantAwareClient();
+    Map<String, String> properties =
+        ImmutableMap.<String, String>builder()
+            .putAll(exchangeDisabledCatalogProperties())
+            .put(OAuth2Properties.TOKEN, "table-token")
+            .buildOrThrow();
+    try (OAuth2Manager manager = new OAuth2Manager("test");
+        OAuth2Util.AuthSession tableSession =
+            (OAuth2Util.AuthSession) manager.tableSession(grantClient, properties)) {
+      Mockito.clearInvocations(grantClient);
+
+      tableSession.refresh(grantClient);
+
+      assertThat(tableSession.token()).isEqualTo("table-token");
+      verifyNoClientCredentialsGrant(grantClient);
     }
   }
 

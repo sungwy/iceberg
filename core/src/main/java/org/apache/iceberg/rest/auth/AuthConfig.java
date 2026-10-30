@@ -65,13 +65,13 @@ public interface AuthConfig {
   }
 
   /**
-   * Whether the token represents a subject other than the client identified by {@link
-   * #credential()}, such as a token supplied by a session context or a table configuration. The
-   * credential is never used to obtain a replacement token for such a session.
+   * Whether the token may be refreshed by fetching a new token for {@link #credential()} with the
+   * client credentials grant. Sessions created from an access token or by token exchange set this
+   * to false.
    */
   @Value.Default
-  default boolean subjectBound() {
-    return false;
+  default boolean clientCredentialsRefreshEnabled() {
+    return true;
   }
 
   @Nullable
