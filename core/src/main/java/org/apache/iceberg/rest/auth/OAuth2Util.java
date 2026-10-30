@@ -29,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -499,6 +500,13 @@ public class OAuth2Util {
      */
     public Pair<Integer, TimeUnit> refresh(RESTClient client) {
       if (token() != null && config.keepRefreshed()) {
+        if (config.subjectBound() && !config.exchangeEnabled()) {
+          // without token exchange, the only remaining grant is client_credentials, which would
+          // replace the subject's token with a token for the credential's client
+          LOG.warn("Not refreshing a subject's token because token exchange is disabled");
+          return null;
+        }
+
         AtomicReference<OAuthTokenResponse> ref = new AtomicReference<>(null);
         boolean isSuccessful =
             Tasks.foreach(ref)
@@ -606,12 +614,21 @@ public class OAuth2Util {
           TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * Creates a session that authenticates with the given access token.
+     *
+     * <p>When the token differs from the parent's token, the new session is subject-bound: the
+     * token was supplied for a subject other than the client identified by the parent's credential,
+     * so the credential is not used to replace it on refresh.
+     */
     public static AuthSession fromAccessToken(
         RESTClient client,
         ScheduledExecutorService executor,
         String token,
         Long defaultExpiresAtMillis,
         AuthSession parent) {
+      boolean subjectBound =
+          parent.config().subjectBound() || !Objects.equals(token, parent.token());
       AuthSession session =
           new AuthSession(
               RESTUtil.merge(parent.headers(), authHeaders(token)),
@@ -620,6 +637,7 @@ public class OAuth2Util {
                   .token(token)
                   .tokenType(OAuth2Properties.ACCESS_TOKEN_TYPE)
                   .expiresAtMillis(OAuth2Util.expiresAtMillis(token))
+                  .subjectBound(subjectBound)
                   .build());
 
       long startTimeMillis = System.currentTimeMillis();
@@ -665,7 +683,16 @@ public class OAuth2Util {
               parent.scope(),
               parent.oauth2ServerUri(),
               parent.optionalOAuthParams());
-      return fromTokenResponse(client, executor, response, startTimeMillis, parent, credential);
+      // the token was issued to the client identified by this credential, so it may renew it
+      return fromTokenResponse(
+          client,
+          executor,
+          response,
+          startTimeMillis,
+          parent,
+          credential,
+          parent.config().exchangeEnabled(),
+          false /* not subject-bound */);
     }
 
     public static AuthSession fromTokenResponse(
@@ -675,7 +702,14 @@ public class OAuth2Util {
         long startTimeMillis,
         AuthSession parent) {
       return fromTokenResponse(
-          client, executor, response, startTimeMillis, parent, parent.credential());
+          client,
+          executor,
+          response,
+          startTimeMillis,
+          parent,
+          parent.credential(),
+          parent.config().exchangeEnabled(),
+          parent.config().subjectBound());
     }
 
     private static AuthSession fromTokenResponse(
@@ -684,7 +718,9 @@ public class OAuth2Util {
         OAuthTokenResponse response,
         long startTimeMillis,
         AuthSession parent,
-        String credential) {
+        String credential,
+        boolean exchangeEnabled,
+        boolean subjectBound) {
       // issued_token_type is required in RFC 8693 but not in RFC 6749,
       // thus assume type is access_token for compatibility with RFC 6749.
       // See https://datatracker.ietf.org/doc/html/rfc6749#section-4.4.3
@@ -701,6 +737,8 @@ public class OAuth2Util {
                   .token(response.token())
                   .tokenType(issuedTokenType)
                   .credential(credential)
+                  .exchangeEnabled(exchangeEnabled)
+                  .subjectBound(subjectBound)
                   .expiresAtMillis(OAuth2Util.expiresAtMillis(response.token()))
                   .build());
 
@@ -734,7 +772,17 @@ public class OAuth2Util {
               parent.scope(),
               parent.oauth2ServerUri(),
               parent.optionalOAuthParams());
-      return fromTokenResponse(client, executor, response, startTimeMillis, parent);
+      // the exchanged token represents the subject and is renewed by exchange, regardless of the
+      // parent's token-exchange-enabled setting, which governs credential-derived sessions
+      return fromTokenResponse(
+          client,
+          executor,
+          response,
+          startTimeMillis,
+          parent,
+          parent.credential(),
+          true /* exchange enabled */,
+          true /* subject-bound */);
     }
   }
 }

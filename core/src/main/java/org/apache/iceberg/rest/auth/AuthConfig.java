@@ -64,6 +64,16 @@ public interface AuthConfig {
     return OAuth2Properties.TOKEN_EXCHANGE_ENABLED_DEFAULT;
   }
 
+  /**
+   * Whether the token represents a subject other than the client identified by {@link
+   * #credential()}, such as a token supplied by a session context or a table configuration. The
+   * credential is never used to obtain a replacement token for such a session.
+   */
+  @Value.Default
+  default boolean subjectBound() {
+    return false;
+  }
+
   @Nullable
   @Value.Default
   default String oauth2ServerUri() {

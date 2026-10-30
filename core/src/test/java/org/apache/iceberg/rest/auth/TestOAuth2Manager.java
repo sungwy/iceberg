@@ -23,7 +23,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.InstanceOfAssertFactories.type;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
@@ -574,5 +576,149 @@ class TestOAuth2Manager {
     }
     Mockito.verify(client).withAuthSession(any());
     Mockito.verifyNoMoreInteractions(client);
+  }
+
+  private static final String CATALOG_CREDENTIAL = "catalog-client:catalog-secret";
+  private static final String CATALOG_PRINCIPAL_TOKEN = "catalog-principal-token";
+  private static final String EXCHANGED_TOKEN = "exchanged-token";
+  private static final String TOKEN_EXCHANGE_GRANT =
+      "urn:ietf:params:oauth:grant-type:token-exchange";
+
+  @Test
+  void contextualSessionWithTokenDoesNotRefreshWithCatalogCredential() {
+    RESTClient grantClient = grantAwareClient();
+    SessionCatalog.SessionContext context =
+        new SessionCatalog.SessionContext(
+            "test", "user", Map.of(OAuth2Properties.TOKEN, "user-token"), Map.of());
+    try (OAuth2Manager manager = new OAuth2Manager("test");
+        OAuth2Util.AuthSession catalogSession =
+            manager.catalogSession(grantClient, exchangeDisabledCatalogProperties());
+        OAuth2Util.AuthSession contextualSession =
+            manager.contextualSession(context, catalogSession)) {
+      Mockito.clearInvocations(grantClient);
+
+      contextualSession.refresh(grantClient);
+
+      assertThat(contextualSession.token()).isEqualTo("user-token");
+      verifyNoClientCredentialsGrant(grantClient);
+    }
+  }
+
+  @Test
+  void contextualSessionFromTokenExchangeRefreshesByExchange() {
+    RESTClient grantClient = grantAwareClient();
+    SessionCatalog.SessionContext context =
+        new SessionCatalog.SessionContext(
+            "test", "user", Map.of(OAuth2Properties.JWT_TOKEN_TYPE, "subject-jwt"), Map.of());
+    try (OAuth2Manager manager = new OAuth2Manager("test");
+        OAuth2Util.AuthSession catalogSession =
+            manager.catalogSession(grantClient, exchangeDisabledCatalogProperties());
+        OAuth2Util.AuthSession contextualSession =
+            manager.contextualSession(context, catalogSession)) {
+      assertThat(contextualSession.token()).isEqualTo(EXCHANGED_TOKEN);
+      Mockito.clearInvocations(grantClient);
+
+      contextualSession.refresh(grantClient);
+
+      assertThat(contextualSession.token()).isEqualTo(EXCHANGED_TOKEN);
+      Mockito.verify(grantClient)
+          .postForm(
+              any(),
+              argThat(
+                  form ->
+                      form != null
+                          && TOKEN_EXCHANGE_GRANT.equals(form.get("grant_type"))
+                          && EXCHANGED_TOKEN.equals(form.get("subject_token"))),
+              eq(OAuthTokenResponse.class),
+              anyMap(),
+              any());
+      verifyNoClientCredentialsGrant(grantClient);
+    }
+  }
+
+  @Test
+  void tableSessionWithVendedTokenDoesNotRefreshWithCatalogCredential() {
+    RESTClient grantClient = grantAwareClient();
+    TableIdentifier table = TableIdentifier.of("ns", "tbl");
+    try (OAuth2Manager manager = new OAuth2Manager("test");
+        OAuth2Util.AuthSession catalogSession =
+            manager.catalogSession(grantClient, exchangeDisabledCatalogProperties());
+        OAuth2Util.AuthSession tableSession =
+            manager.tableSession(
+                table, Map.of(OAuth2Properties.TOKEN, "table-token"), catalogSession)) {
+      Mockito.clearInvocations(grantClient);
+
+      tableSession.refresh(grantClient);
+
+      assertThat(tableSession.token()).isEqualTo("table-token");
+      verifyNoClientCredentialsGrant(grantClient);
+    }
+  }
+
+  @Test
+  void catalogSessionWithTokenAndCredentialRefreshesWithCredential() {
+    RESTClient grantClient = grantAwareClient();
+    Map<String, String> catalogProperties =
+        Map.of(
+            OAuth2Properties.TOKEN,
+            "catalog-token",
+            OAuth2Properties.CREDENTIAL,
+            CATALOG_CREDENTIAL,
+            OAuth2Properties.TOKEN_EXCHANGE_ENABLED,
+            "false");
+    try (OAuth2Manager manager = new OAuth2Manager("test");
+        OAuth2Util.AuthSession catalogSession =
+            manager.catalogSession(grantClient, catalogProperties)) {
+      catalogSession.refresh(grantClient);
+
+      assertThat(catalogSession.token()).isEqualTo(CATALOG_PRINCIPAL_TOKEN);
+    }
+  }
+
+  private static Map<String, String> exchangeDisabledCatalogProperties() {
+    return Map.of(
+        OAuth2Properties.CREDENTIAL,
+        CATALOG_CREDENTIAL,
+        OAuth2Properties.TOKEN_EXCHANGE_ENABLED,
+        "false");
+  }
+
+  private static RESTClient grantAwareClient() {
+    RESTClient mockClient = Mockito.mock(RESTClient.class);
+    when(mockClient.withAuthSession(any())).thenReturn(mockClient);
+    when(mockClient.postForm(
+            any(),
+            argThat(form -> form != null && "client_credentials".equals(form.get("grant_type"))),
+            eq(OAuthTokenResponse.class),
+            anyMap(),
+            any()))
+        .thenReturn(tokenResponse(CATALOG_PRINCIPAL_TOKEN));
+    when(mockClient.postForm(
+            any(),
+            argThat(form -> form != null && TOKEN_EXCHANGE_GRANT.equals(form.get("grant_type"))),
+            eq(OAuthTokenResponse.class),
+            anyMap(),
+            any()))
+        .thenReturn(tokenResponse(EXCHANGED_TOKEN));
+    return mockClient;
+  }
+
+  private static void verifyNoClientCredentialsGrant(RESTClient mockClient) {
+    Mockito.verify(mockClient, never())
+        .postForm(
+            any(),
+            argThat(form -> form != null && "client_credentials".equals(form.get("grant_type"))),
+            eq(OAuthTokenResponse.class),
+            anyMap(),
+            any());
+  }
+
+  private static OAuthTokenResponse tokenResponse(String token) {
+    return OAuthTokenResponse.builder()
+        .withToken(token)
+        .withIssuedTokenType(OAuth2Properties.ACCESS_TOKEN_TYPE)
+        .withTokenType("bearer")
+        .setExpirationInSeconds(3600)
+        .build();
   }
 }
