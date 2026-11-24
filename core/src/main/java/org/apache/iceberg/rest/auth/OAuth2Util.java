@@ -412,7 +412,8 @@ public class OAuth2Util {
   }
 
   /** Class to handle authorization headers and token refresh. */
-  public static class AuthSession implements org.apache.iceberg.rest.auth.AuthSession {
+  public static class AuthSession
+      implements org.apache.iceberg.rest.auth.AuthSession, BearerTokenSource {
     private static int tokenRefreshNumRetries = 5;
     private static final long MAX_REFRESH_WINDOW_MILLIS = 300_000; // 5 minutes
     private static final long MIN_REFRESH_WAIT_MILLIS = 10;
@@ -436,6 +437,7 @@ public class OAuth2Util {
       return headers;
     }
 
+    @Override
     public String token() {
       return config.token();
     }

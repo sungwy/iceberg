@@ -22,17 +22,17 @@ import java.util.regex.Pattern;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 
 /**
- * A source of bearer tokens for {@link BearerAuthManager}.
+ * A source of the bearer token that an {@link AuthSession} presents.
  *
- * <p>Implementations must never include {@link #token()} in their {@link Object#toString()}
- * representation.
+ * <p>Tokens returned by later calls are issued for the same principal. Implementations must never
+ * include {@link #token()} in their {@link Object#toString()} representation.
  */
-interface BearerTokenSource {
+public interface BearerTokenSource {
 
   /** A pattern that validates the token68 grammar from RFC 9110 section 11.2. */
   Pattern TOKEN68 = Pattern.compile("[A-Za-z0-9\\-._~+/]+=*");
 
-  /** Returns the current token; never null. */
+  /** Returns the current token, or null if the source has none. */
   String token();
 
   /**

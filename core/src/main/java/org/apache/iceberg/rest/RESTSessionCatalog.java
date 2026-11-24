@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -80,7 +81,12 @@ import org.apache.iceberg.rest.RESTCatalogProperties.SnapshotMode;
 import org.apache.iceberg.rest.RESTTableCache.TableWithETag;
 import org.apache.iceberg.rest.auth.AuthManager;
 import org.apache.iceberg.rest.auth.AuthManagers;
+import org.apache.iceberg.rest.auth.AuthProperties;
 import org.apache.iceberg.rest.auth.AuthSession;
+import org.apache.iceberg.rest.auth.BearerTokenSource;
+import org.apache.iceberg.rest.auth.FileIOAuthBinder;
+import org.apache.iceberg.rest.auth.FileIOSession;
+import org.apache.iceberg.rest.auth.OAuth2Properties;
 import org.apache.iceberg.rest.credentials.Credential;
 import org.apache.iceberg.rest.requests.CommitTransactionRequest;
 import org.apache.iceberg.rest.requests.CreateNamespaceRequest;
@@ -122,6 +128,14 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
     implements Configurable<Object>, Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(RESTSessionCatalog.class);
   private static final String DEFAULT_FILE_IO_IMPL = "org.apache.iceberg.io.ResolvingFileIO";
+  private static final String AUTH_PROPERTY_PREFIX = "rest.auth.";
+  private static final String TOKEN_TYPE_PROPERTY_PREFIX = "urn:ietf:params:oauth:token-type:";
+  private static final Set<String> CLIENT_AUTH_PROPERTIES =
+      ImmutableSet.of(
+          OAuth2Properties.CREDENTIAL,
+          OAuth2Properties.TOKEN,
+          "rest.sigv4-enabled",
+          "header.authorization");
 
   // these default endpoints must not be updated in order to maintain backwards compatibility with
   // legacy servers
@@ -160,6 +174,9 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
   private FileIOTracker fileIOTracker = null;
   private AuthSession catalogAuth = null;
   private AuthManager authManager;
+  private final FileIOAuthBinder fileIOAuthBinder;
+  private String fileIOSessionKeyPrefix = null;
+  private volatile boolean closed = false;
   private RESTClient client = null;
   private ResourcePaths paths = null;
   private SnapshotMode snapshotMode = null;
@@ -190,9 +207,18 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
   public RESTSessionCatalog(
       Function<Map<String, String>, RESTClient> clientBuilder,
       BiFunction<SessionContext, Map<String, String>, FileIO> ioBuilder) {
+    this(clientBuilder, ioBuilder, FileIOAuthBinder.staticBearerToken());
+  }
+
+  public RESTSessionCatalog(
+      Function<Map<String, String>, RESTClient> clientBuilder,
+      BiFunction<SessionContext, Map<String, String>, FileIO> ioBuilder,
+      FileIOAuthBinder fileIOAuthBinder) {
     Preconditions.checkNotNull(clientBuilder, "Invalid client builder: null");
+    Preconditions.checkNotNull(fileIOAuthBinder, "Invalid FileIO auth binder: null");
     this.clientBuilder = clientBuilder;
     this.ioBuilder = ioBuilder;
+    this.fileIOAuthBinder = fileIOAuthBinder;
   }
 
   @Override
@@ -207,6 +233,12 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
 
     this.authManager = AuthManagers.loadAuthManager(name, props);
     this.closeables.addCloseable(this.authManager);
+    if (PropertyUtil.propertyAsBoolean(
+        props,
+        AuthProperties.FILE_IO_SESSION_ENABLED,
+        AuthProperties.FILE_IO_SESSION_ENABLED_DEFAULT)) {
+      this.fileIOSessionKeyPrefix = UUID.randomUUID().toString();
+    }
 
     ConfigResponse config;
     try (RESTClient initClient = clientBuilder.apply(props);
@@ -641,7 +673,8 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
 
       trackFileIO(ops);
 
-      RESTTable table = restTableForScanPlanning(ops, identifier, tableClient, tableConf, labels);
+      RESTTable table =
+          restTableForScanPlanning(ops, identifier, context, tableClient, tableConf, labels);
       if (table != null) {
         return table;
       }
@@ -657,6 +690,7 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
   private RESTTable restTableForScanPlanning(
       TableOperations ops,
       TableIdentifier finalIdentifier,
+      SessionContext context,
       RESTClient restClient,
       Map<String, String> tableConf,
       Labels labels) {
@@ -703,7 +737,9 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
           finalIdentifier,
           paths,
           endpoints,
-          properties(),
+          withFileIOAuthProperties(
+              properties(),
+              checkedFileIOAuthProperties(fileIOSession(finalIdentifier, context, tableConf))),
           conf,
           labels);
     }
@@ -800,7 +836,7 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
     trackFileIO(ops);
 
     RESTTable restTable =
-        restTableForScanPlanning(ops, ident, tableClient, tableConf, response.labels());
+        restTableForScanPlanning(ops, ident, context, tableClient, tableConf, response.labels());
     if (restTable != null) {
       return restTable;
     }
@@ -983,6 +1019,7 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
 
   @Override
   public void close() throws IOException {
+    this.closed = true;
     if (closeables != null) {
       closeables.close();
     }
@@ -1114,7 +1151,7 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
       trackFileIO(ops);
 
       RESTTable restTable =
-          restTableForScanPlanning(ops, ident, tableClient, tableConf, response.labels());
+          restTableForScanPlanning(ops, ident, context, tableClient, tableConf, response.labels());
       if (restTable != null) {
         return restTable;
       }
@@ -1355,8 +1392,11 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
       List<Credential> storageCredentials,
       RemoteSigningConfig remoteSigningConfig) {
 
+    Map<String, String> fileIOAuthProperties =
+        checkedFileIOAuthProperties(fileIOSession(tableIdentifier, context, tableConf));
     boolean canReuseCatalogIO =
-        tableConf.isEmpty()
+        fileIOAuthProperties.isEmpty()
+            && tableConf.isEmpty()
             && ioBuilder == null
             && storageCredentials.isEmpty()
             && remoteSigningConfig.isEmpty();
@@ -1378,7 +1418,103 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
           RemoteSigningConfigParser.toJson(remoteSigningConfig));
     }
 
-    return newFileIO(context, fullConf.buildKeepingLast(), storageCredentials);
+    return newFileIO(
+        context,
+        withFileIOAuthProperties(fullConf.buildKeepingLast(), fileIOAuthProperties),
+        storageCredentials);
+  }
+
+  private FileIOSession fileIOSession(
+      TableIdentifier tableIdentifier, SessionContext context, Map<String, String> tableConf) {
+    if (fileIOSessionKeyPrefix == null) {
+      return null;
+    }
+
+    AuthSession contextualSession = authManager.contextualSession(context, catalogAuth);
+    AuthSession tableSession =
+        authManager.tableSession(tableIdentifier, tableConf, contextualSession);
+    if (tableSession == catalogAuth) {
+      return null;
+    }
+
+    Preconditions.checkState(
+        tableSession instanceof BearerTokenSource,
+        "Cannot bind FileIO for table %s to its session: %s is not a bearer token source",
+        tableIdentifier,
+        tableSession.getClass().getName());
+
+    String sessionKey = fileIOSessionKeyPrefix + "/" + RESTUtil.encodeString(context.sessionId());
+    if (tableSession != contextualSession) {
+      sessionKey =
+          sessionKey
+              + "/"
+              + RESTUtil.encodeNamespace(tableIdentifier.namespace(), "/")
+              + "/"
+              + RESTUtil.encodeString(tableIdentifier.name());
+    }
+
+    return new BoundFileIOSession(
+        sessionKey, tableIdentifier, sessionTokenSource(tableIdentifier, context, tableConf));
+  }
+
+  private Map<String, String> checkedFileIOAuthProperties(FileIOSession fileIOSession) {
+    if (fileIOSession == null) {
+      return Map.of();
+    }
+
+    Map<String, String> fileIOAuthProperties = fileIOAuthBinder.fileIOAuthProperties(fileIOSession);
+    Preconditions.checkState(
+        fileIOAuthProperties != null && !fileIOAuthProperties.isEmpty(),
+        "Cannot bind FileIO for table %s to its session: no auth properties",
+        fileIOSession.tableIdentifier());
+    for (String propertyName : fileIOAuthProperties.keySet()) {
+      Preconditions.checkState(
+          propertyName.startsWith(AUTH_PROPERTY_PREFIX),
+          "Cannot bind FileIO for table %s to its session: invalid auth property %s",
+          fileIOSession.tableIdentifier(),
+          propertyName);
+    }
+
+    return ImmutableMap.copyOf(fileIOAuthProperties);
+  }
+
+  private BearerTokenSource sessionTokenSource(
+      TableIdentifier tableIdentifier, SessionContext context, Map<String, String> tableConf) {
+    return () -> {
+      if (closed) {
+        return null;
+      }
+
+      AuthSession tableSession =
+          authManager.tableSession(
+              tableIdentifier, tableConf, authManager.contextualSession(context, catalogAuth));
+      return tableSession instanceof BearerTokenSource bearerTokenSource
+          ? bearerTokenSource.token()
+          : null;
+    };
+  }
+
+  private record BoundFileIOSession(
+      String sessionKey, TableIdentifier tableIdentifier, BearerTokenSource bearerTokenSource)
+      implements FileIOSession {}
+
+  private static Map<String, String> withFileIOAuthProperties(
+      Map<String, String> properties, Map<String, String> fileIOAuthProperties) {
+    if (fileIOAuthProperties.isEmpty()) {
+      return properties;
+    }
+
+    return ImmutableMap.<String, String>builder()
+        .putAll(Maps.filterKeys(properties, propertyName -> !isClientAuthProperty(propertyName)))
+        .putAll(fileIOAuthProperties)
+        .buildOrThrow();
+  }
+
+  private static boolean isClientAuthProperty(String propertyName) {
+    String lowerCasePropertyName = propertyName.toLowerCase(Locale.ROOT);
+    return lowerCasePropertyName.startsWith(AUTH_PROPERTY_PREFIX)
+        || lowerCasePropertyName.startsWith(TOKEN_TYPE_PROPERTY_PREFIX)
+        || CLIENT_AUTH_PROPERTIES.contains(lowerCasePropertyName);
   }
 
   /**

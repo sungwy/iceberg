@@ -31,7 +31,7 @@ import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
 record BearerAuthConfig(
     @Nullable Path tokenFile, @Nullable Duration reloadInterval, @Nullable String token) {
 
-  static final String BEARER_TOKEN = "rest.auth.bearer.token";
+  static final String BEARER_TOKEN = AuthProperties.BEARER_TOKEN;
   static final String BEARER_TOKEN_FILE = "rest.auth.bearer.token-file";
   static final String BEARER_TOKEN_FILE_RELOAD_INTERVAL =
       "rest.auth.bearer.token-file.reload-interval";
